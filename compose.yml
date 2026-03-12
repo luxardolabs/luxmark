@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  luxmark:
+    build: .
+    container_name: luxmark
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - NGINX_WORKER_PROCESSES=auto
+      - NGINX_WORKER_CONNECTIONS=1024
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - luxardolabs
+
+networks:
+  luxardolabs:
+    external: true
