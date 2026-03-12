@@ -116,7 +116,7 @@ Use this to show markdown examples or templates!
 |---------|---------|--------|--------|
 | Live Preview | ✅ Instant | ⏱️ Delayed | LuxMark 🏆 |
 | Dark Mode | 🌙 Beautiful | 🔦 Basic | LuxMark 🏆 |
-| Export Options | 📄 MD, HTML, PDF | 📄 Limited | LuxMark 🏆 |
+| Export Options | 📄 MD, HTML, PDF, TXT | 📄 Limited | LuxMark 🏆 |
 | Fun Factor | 🎉 Maximum | 😐 Meh | LuxMark 🏆 |
 
 ### Emoji Reaction Guide
@@ -270,20 +270,19 @@ Special characters galore: © ® ™ ° ± × ÷ ≠ ≤ ≥ ∞ ∑ √ ∫ ≈
 
 With LuxMark, your content is never locked in:
 
-1. **📋 Copy as Markdown** - Share the source
-2. **📄 Copy as HTML** - Ready for the web
+1. **📋 Copy MD** - Share the raw markdown source
+2. **📄 Copy HTML** - Ready for the web
 3. **✨ Copy Rich** - Paste directly into Word/Google Docs with formatting!
-4. **💾 Download as .md** - Version control friendly
-5. **🌐 Download as .html** - Standalone document
-6. **📑 Export to PDF** - Professional presentations
+4. **🧹 Copy Clean** - Lightweight copy for Slack, Teams, and chat apps
+5. **💾 Download MD** - Version control friendly
+6. **🌐 Download HTML** - Standalone document
+7. **📑 Download PDF** - Professional presentations
+8. **📝 Download TXT** - Plain text extracted from rendered preview
 
-### 🎨 Pro Tip: Custom Fonts
-Use the font selector in the toolbar to change the preview font! Your selection will be preserved when you copy rich text to Word or Google Docs. Choose from:
-- Poppins (modern & clean)
-- Georgia (classic serif)
-- Times New Roman (traditional)
-- Arial (professional)
-- And more!
+### 🎨 Pro Tips
+**Custom Fonts** — Use the font selector in the toolbar to change the preview font. Your selection is saved and preserved when you copy rich text. Choose from Poppins, Georgia, Times New Roman, Arial, and more!
+
+**Preview Width** — Use the width selector to toggle between Wide (1200px) and Full width for the preview pane.
 
 ---
 
