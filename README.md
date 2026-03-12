@@ -2,7 +2,7 @@
 
 <div align="center">
   <img src="https://img.shields.io/badge/version-1.0.5-blue.svg" alt="Version">
-  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
+  <img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License">
   <img src="https://img.shields.io/badge/built%20with-JavaScript-yellow.svg" alt="Built with JavaScript">
   <img src="https://img.shields.io/badge/no%20build%20tools-required-brightgreen.svg" alt="No Build Tools Required">
 </div>
@@ -157,7 +157,7 @@ Thanks to the teams behind [Marked.js](https://github.com/markedjs/marked), [Cod
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+AGPL-3.0 License — see [LICENSE](LICENSE) for details.
 
 ---
 
