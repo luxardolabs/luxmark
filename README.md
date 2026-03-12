@@ -77,12 +77,12 @@ cd src && npx http-server
 ### Option 2: Docker
 
 ```bash
-# Build and run
+# Run the pre-built image (no clone needed)
+docker run -d -p 8080:8080 --name luxmark ghcr.io/luxardolabs/luxmark:latest
+
+# Or build from source
 docker build -t luxmark .
 docker run -d -p 8080:8080 --name luxmark luxmark
-
-# Or with Docker Compose
-docker compose up -d
 
 # Access at http://localhost:8080
 ```
