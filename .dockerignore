@@ -1,0 +1,36 @@
+# Git
+.git
+.gitignore
+
+# Documentation (not needed in image)
+docs/
+README*.md
+CONTRIBUTING.md
+CHANGELOG.md
+LICENSE
+
+# Docker files
+Dockerfile
+compose*.yml
+.dockerignore
+
+# Environment files
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Node (if added later)
+node_modules/
+npm-debug.log*

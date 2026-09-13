@@ -50,3 +50,6 @@ test.html
 .claude/.luxpm-ledger.json
 .claude/settings.json.bak
 .claude/.push-hold
+
+# Site-local topology (registry host, node names) — Makefile.local.example is the committed template
+Makefile.local

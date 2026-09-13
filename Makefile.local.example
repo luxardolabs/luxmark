@@ -1,0 +1,16 @@
+# Site-local topology for luxmark — copy to `Makefile.local` (gitignored) and fill in.
+#
+# WHY THIS FILE EXISTS: the committed Makefile is environment-agnostic by fleet standard
+# (`luxarch --doc FLEET-BUILD-DEPLOY-STANDARD`, "Per-repo Makefile convention"). A registry host is
+# internal **topology** — not a secret, but a disclosure risk in a PUBLIC repo like this one — so it
+# stays out of git while the Makefile itself is always committed. That split is what lets a clean
+# clone run `make lint` / `make arch` with zero config: every recipe references the variable.
+#
+# Secrets never live here either. Credentials go in SOPS-encrypted files or a node-only `.env`,
+# never in a Makefile, public repo or private.
+
+# The private registry serving the fleet guard images and the internal copy of this app's image.
+LUX_REGISTRY := registry.example.internal:5000
+
+# Optional — defaults to LUX_REGISTRY. Set only if the app image lives somewhere else.
+# LOCAL_REGISTRY := registry.example.internal:5000
