@@ -1,0 +1,13 @@
+{
+  "guard": "luxaudit",
+  "guard_version": "0.7.0",
+  "repo": "/repo",
+  "inert": true,
+  "inert_reason": "static-web app: no Python anywhere. Dependencies are 16 CDN <script>/<link> tags in src/index.html, each pinned to an immutable version and SRI-verified \u2014 enforced by luxarch's static.external_deps_pinned + static.external_deps_integrity, which is the right altitude for a markup-declared supply chain.",
+  "summary": {
+    "PASS": 0,
+    "FAIL": 0,
+    "XFAIL": 0,
+    "NA": 1
+  }
+}
