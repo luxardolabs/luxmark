@@ -1,0 +1,28 @@
+# luxlint — fleet ruff/mypy/eslint standard for luxmark. Pinned in the Makefile (LUXLINT_VERSION).
+# The canonical configs live in the image; this file carries only luxmark's facts.
+#
+# luxmark has NO PYTHON — it is vanilla ES6 modules served as static files. The Python legs
+# (lint.ruff / lint.format / mypy) therefore have nothing to scan, and [source].paths names the JS
+# tree only so the repo is not silently unlinted. The leg that does the real work here is eslint.
+
+[source]
+paths = ["src/js"]
+
+[js]
+paths       = ["src/js"]
+source_type = "module"          # ES modules (<script type="module">), not classic scripts
+
+# Libraries loaded from a CDN as classic scripts, which therefore appear as globals rather than
+# imports. Declaring them is what makes `no-undef` meaningful: an undeclared global is then a real
+# typo or a missing dependency, not noise. Every entry here is a <script> tag in src/index.html —
+# keep the two in step.
+globals = [
+  "marked",          # marked@15.0.12 — markdown parser
+  "markedFootnote",  # marked-footnote@1.4.0 — footnote extension (window.markedFootnote)
+  "DOMPurify",       # dompurify@3.2.7 — sanitizes rendered markdown before it reaches innerHTML
+  "hljs",            # highlight.js@11.9.0 — syntax highlighting of rendered code blocks
+  "katex",           # katex@0.16.9 — math rendering
+  "CodeMirror",      # codemirror@5.65.16 — the editor itself
+  "jspdf",           # jspdf@2.5.1 — PDF export
+  "html2canvas",     # html2canvas@1.4.1 — canvas capture for PDF/image export
+]

@@ -86,11 +86,11 @@ export class MarkdownParser {
 
         // Inline math - be careful to avoid single $
         // Use a more restrictive pattern that doesn't cross HTML tags or line breaks
-        html = html.replace(/\$([^\$<]+?)\$/g, (match, math) => {
+        html = html.replace(/\$([^$<]+?)\$/g, (match, math) => {
             const trimmed = math.trim();
 
             // Skip if it looks like currency (e.g., $5, $10.99, $100M, $500K+)
-            if (/^\d+\.?\d*[KMB]?[+\-]?$/i.test(trimmed)) {
+            if (/^\d+\.?\d*[KMB]?[+-]?$/i.test(trimmed)) {
                 return match;
             }
 

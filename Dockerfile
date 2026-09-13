@@ -1,18 +1,24 @@
 # Multi-stage build for minimal final image
 FROM nginx:alpine
 
-# Build arguments
-ARG VERSION=unknown
+# Provenance build args — the fleet-canonical names (repo.dockerfile_provenance_args). An image
+# whose revision cannot be traced to a commit is unauditable after the fact.
+ARG BUILD_VERSION=unknown
+ARG BUILD_COMMIT=unknown
 ARG BUILD_TIMESTAMP=unknown
-ARG BUILD_DATE=unknown
 
-# Labels for metadata
-LABEL maintainer="luxardolabs" \
+# OCI standard labels (repo.oci_image_labels) — version/created/revision are what `docker inspect`
+# and every scanner read. The app.* labels stay as a convenience for anything already keyed on them.
+LABEL org.opencontainers.image.title="luxmark" \
+      org.opencontainers.image.description="Premium browser-based markdown editor with live preview" \
+      org.opencontainers.image.version="${BUILD_VERSION}" \
+      org.opencontainers.image.revision="${BUILD_COMMIT}" \
+      org.opencontainers.image.created="${BUILD_TIMESTAMP}" \
+      org.opencontainers.image.source="https://github.com/luxardolabs/luxmark" \
+      org.opencontainers.image.licenses="AGPL-3.0" \
+      maintainer="luxardolabs" \
       app.name="luxmark" \
-      app.version="${VERSION}" \
-      app.build.date="${BUILD_DATE}" \
-      app.build.timestamp="${BUILD_TIMESTAMP}" \
-      app.description="Premium browser-based markdown editor with live preview"
+      app.version="${BUILD_VERSION}"
 
 # Add security headers and configurations
 RUN rm /etc/nginx/conf.d/default.conf
@@ -32,18 +38,14 @@ COPY src/welcome-to-luxmark.md /usr/share/nginx/html/
 # Create version file with build information
 RUN echo "{ \
   \"app\": \"luxmark\", \
-  \"version\": \"${VERSION}\", \
-  \"buildDate\": \"${BUILD_DATE}\", \
+  \"version\": \"${BUILD_VERSION}\", \
   \"buildTimestamp\": \"${BUILD_TIMESTAMP}\", \
-  \"git\": { \
-    \"branch\": \"main\", \
-    \"commit\": \"n/a\" \
-  } \
+  \"commit\": \"${BUILD_COMMIT}\" \
 }" > /usr/share/nginx/html/version.json
 
 # Set environment variables for runtime
-ENV APP_VERSION=${VERSION} \
-    APP_BUILD_DATE=${BUILD_DATE} \
+ENV APP_VERSION=${BUILD_VERSION} \
+    APP_COMMIT=${BUILD_COMMIT} \
     APP_BUILD_TIMESTAMP=${BUILD_TIMESTAMP}
 
 # Create necessary directories and set permissions

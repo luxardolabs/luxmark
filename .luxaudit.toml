@@ -1,0 +1,22 @@
+# luxaudit — fleet SCA / dependency-CVE standard for luxmark. Pinned in the Makefile
+# (LUXAUDIT_VERSION). Policy lives in the image; this file carries only luxmark's facts.
+#
+# HONEST SCOPE NOTE, because a clean run here means less than it does elsewhere: luxmark declares no
+# Python and no npm manifest — its dependencies are 16 CDN <script>/<link> tags in src/index.html, so
+# there is no lockfile for pip-audit to read and luxaudit will report zero packages. That is accurate,
+# not a pass to lean on.
+#
+# The supply chain that DOES exist is guarded by luxarch's static-web pack instead, which is the right
+# altitude for it: static.external_deps_pinned (every CDN URL resolves to an immutable version) and
+# static.external_deps_integrity (every one carries an SRI hash + crossorigin, so a compromised CDN
+# response cannot execute). Bumping a CDN pin is a deliberate, reviewed change there — the equivalent
+# of a lockfile bump here.
+
+# ATTESTATION (luxaudit 0.7.0): this repo has no Python dependency source, so the scan reports
+# ○ N/A rather than erroring. A reason is mandatory — without one the attestation is dropped and
+# announced, because "we have no lockfile" must stay distinguishable from "the lockfile moved and
+# nobody noticed". If a requirements.txt / poetry.lock ever appears here it is scanned regardless of
+# this block: the attestation cannot switch the guard off.
+[python]
+deps   = "none"
+reason = "static-web app: no Python anywhere. Dependencies are 16 CDN <script>/<link> tags in src/index.html, each pinned to an immutable version and SRI-verified — enforced by luxarch's static.external_deps_pinned + static.external_deps_integrity, which is the right altitude for a markup-declared supply chain."

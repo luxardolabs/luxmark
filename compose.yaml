@@ -1,0 +1,47 @@
+# ONE compose file for luxmark (repo.compose_conventions): the image is BUILT OUTSIDE compose
+# (`make docker-push-local`) and pulled here by an explicit, pinned tag. No `build:` stanza — a
+# compose that builds makes "what is deployed" depend on the working directory, and no `:latest` —
+# a floating deploy tag means a restart can silently change the running version.
+#
+# TAG is required (`${TAG:?}`), so a missing value fails loudly instead of defaulting to something.
+# Set it in .env (see .env.example), normally to the VERSION being deployed.
+name: luxmark
+
+services:
+  web:
+    image: ${LUXMARK_IMAGE:-ghcr.io/luxardolabs/luxmark}:${TAG:?set TAG to the version being deployed}
+    container_name: luxmark-web
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      - NGINX_WORKER_PROCESSES=auto
+      - NGINX_WORKER_CONNECTIONS=1024
+    # Hardening: nothing in this image needs to write to its own filesystem.
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - luxardolabs
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 32M
+
+networks:
+  luxardolabs:
+    external: true

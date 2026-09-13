@@ -156,7 +156,24 @@ class MarkdownEditorApp {
         
         const markdown = this.editor.getValue();
         const html = this.parser.parse(markdown);
-        this.previewElement.innerHTML = html;
+
+        // Sanitize AT THE SINK, not upstream. The parser emits marked's output with KaTeX markup
+        // spliced in afterwards, so this is the one place every byte that becomes live HTML passes
+        // through. marked is not a sanitizer -- it dropped its `sanitize` option and documents
+        // DOMPurify as the answer.
+        //
+        // Today the only content source is what the local user types, which makes an injection
+        // self-inflicted. That stops being true the moment anything else can supply a document --
+        // share-by-URL, open-a-file, paste-as-HTML -- and at that point unsanitized markup reads
+        // every saved document out of localStorage. Sanitizing here means that feature can be added
+        // without also having to remember this.
+        //
+        // KaTeX lays glyphs out with inline `style` and highlight.js keys off `class`; DOMPurify
+        // permits both by default, and MathML/SVG are in its default profile, so math and code
+        // survive. Kept explicit so a future config tightening doesn't silently break rendering.
+        this.previewElement.innerHTML = DOMPurify.sanitize(html, {
+            ADD_ATTR: ['style', 'class'],
+        });
         
         // Re-run syntax highlighting for dynamically added code blocks
         this.previewElement.querySelectorAll('pre code').forEach((block) => {
@@ -188,7 +205,7 @@ class MarkdownEditorApp {
         try {
             await navigator.clipboard.writeText(content);
             this.showNotification('Markdown copied to clipboard!');
-        } catch (err) {
+        } catch {
             // Fallback for older browsers
             const textarea = document.createElement('textarea');
             textarea.value = content;
@@ -200,7 +217,7 @@ class MarkdownEditorApp {
             try {
                 document.execCommand('copy');
                 this.showNotification('Markdown copied to clipboard!');
-            } catch (err) {
+            } catch {
                 this.showNotification('Failed to copy', 'error');
             }
             
@@ -213,7 +230,7 @@ class MarkdownEditorApp {
         try {
             await navigator.clipboard.writeText(html);
             this.showNotification('HTML copied to clipboard!');
-        } catch (err) {
+        } catch {
             // Fallback for older browsers
             const textarea = document.createElement('textarea');
             textarea.value = html;
@@ -225,7 +242,7 @@ class MarkdownEditorApp {
             try {
                 document.execCommand('copy');
                 this.showNotification('HTML copied to clipboard!');
-            } catch (err) {
+            } catch {
                 this.showNotification('Failed to copy', 'error');
             }
 
@@ -242,7 +259,7 @@ class MarkdownEditorApp {
             });
             await navigator.clipboard.write([clipboardItem]);
             this.showNotification('Rich text copied! Paste into Word/Google Docs.');
-        } catch (err) {
+        } catch {
             // Fallback: select and copy the preview content
             const selection = window.getSelection();
             const range = document.createRange();
@@ -254,7 +271,7 @@ class MarkdownEditorApp {
                 document.execCommand('copy');
                 selection.removeAllRanges();
                 this.showNotification('Rich text copied! Paste into Word/Google Docs.');
-            } catch (err) {
+            } catch {
                 selection.removeAllRanges();
                 this.showNotification('Failed to copy', 'error');
             }
@@ -273,7 +290,7 @@ class MarkdownEditorApp {
             });
             await navigator.clipboard.write([clipboardItem]);
             this.showNotification('Clean copy! Paste into Slack, chat apps, etc.');
-        } catch (err) {
+        } catch {
             // Fallback: use the browser's native selection copy
             const selection = window.getSelection();
             const range = document.createRange();
@@ -284,7 +301,7 @@ class MarkdownEditorApp {
                 document.execCommand('copy');
                 selection.removeAllRanges();
                 this.showNotification('Clean copy! Paste into Slack, chat apps, etc.');
-            } catch (err) {
+            } catch {
                 selection.removeAllRanges();
                 this.showNotification('Failed to copy', 'error');
             }

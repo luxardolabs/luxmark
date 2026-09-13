@@ -2,6 +2,9 @@
 .env
 .env.*
 .build.env
+# ...but .env.example is the COMMITTED template (it holds placeholders, never secrets). Without this
+# exemption `.env.*` silently swallowed it.
+!.env.example
 
 # Claude local settings (never committed; project settings.json is)
 .claude/settings.local.json
@@ -28,10 +31,22 @@ Thumbs.db
 # Logs
 *.log
 
-# Local testing
+# Local scratch files next to the source (NOT the test suite — see below)
 test.html
-*.test.js
+/*.test.js
+
+# The test suite lives in tests/ and MUST be committable. The pattern above is root-scoped for that
+# reason: a bare `*.test.js` silently made a test suite impossible to commit, so `test.suite_exists`
+# could never be satisfied by any amount of writing tests.
+!tests/
+!tests/**
 
 # Temporary files
 *.tmp
 *.temp
+
+# Claude Code hook session state (luxarch --emit hooks)
+.claude/.hooks-heartbeat
+.claude/.luxpm-ledger.json
+.claude/settings.json.bak
+.claude/.push-hold

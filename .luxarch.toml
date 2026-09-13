@@ -1,0 +1,30 @@
+# luxarch — fleet architecture-conformance config for luxmark.
+# Onboarded onto luxarch, pinned in the Makefile (LUXARCH_VERSION). The guard image lives in the
+# org's own registry — deliberately not named here, because this repo is PUBLIC and a registry
+# hostname is internal topology (the fleet gitleaks denylist blocks it, and caught exactly this). The rules live in the image, byte-identical fleet-wide; this file carries only
+# luxmark's own facts.
+#
+# POSTURE (luxarch --doc ONBOARDING, --doc FLEET-ONBOARDING-STANDARD): reds stay RED and lit — the
+# fleet does NOT gate CI on a red. Real drift is left red and tracked, never hidden behind
+# [rules.deferred], which is the owner's sparing per-rule dial with a mandatory evidence line and not
+# an onboarding shortcut. Fix a red by aligning to the standard, or escalate a genuinely-wrong guard
+# to the maintainer — never route around it. There is intentionally NO [rules.deferred] block.
+
+# luxmark is a STATIC-WEB app: a browser-based markdown editor served as files by nginx. No
+# server-side code at all — no router, no ORM, no Python — so the layered fastapi-web rules and the
+# library `src/<package>/` rule have nothing to say here. It IS an app kind: it is built, tagged and
+# deployed like any other service (and is publicly hosted), so CalVer, the canonical `check` gate,
+# provenance labels, compose conventions and the release wiring all apply.
+#
+# The two surfaces the static-web pack guards are both real here: the page loads 16 external CDN
+# resources (third-party code running in a visitor's browser), and it renders markdown into
+# `innerHTML` (where text becomes executable markup). See luxarch --doc REFERENCE, kind: static-web.
+[[target]]
+kind = "static-web"
+app  = "src"
+
+# No [shared] — luxmark is self-contained with no bind-mounted SSOT, so there are no placeholders to
+# overlay. Not declaring [shared] IS the "no overlay" attestation.
+#
+# No [enums] / [hypertables] / [uuid] / [observability] / [tenant] / [components] / [importlinter] —
+# all are fastapi-web concerns and inert for a static-web target.

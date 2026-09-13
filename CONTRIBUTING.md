@@ -5,13 +5,14 @@ Thanks for your interest in contributing to LuxMark! Here's how to get started.
 ## Development Setup
 
 1. Clone the repository
-2. Serve the `src/` directory with any HTTP server:
+1. Serve the `src/` directory with any HTTP server:
    ```bash
    cd src && python -m http.server 8000
    ```
-3. Open `http://localhost:8000` in your browser
+1. Open `http://localhost:8000` in your browser
 
 Or use Docker:
+
 ```bash
 docker build -t luxmark .
 docker run --rm -d -p 8080:8080 --name luxmark luxmark
@@ -38,10 +39,10 @@ LuxMark's core philosophy is zero build tools. Please:
 ### Making Changes
 
 1. Fork the repository
-2. Create a branch for your change
-3. Make your changes in `src/` (app code), `docker/` (nginx config), or `docs/` (documentation)
-4. Test locally — both with a local server and with Docker if you changed the Dockerfile or nginx configs
-5. Submit a pull request with a clear description of what you changed and why
+1. Create a branch for your change
+1. Make your changes in `src/` (app code), `docker/` (nginx config), or `docs/` (documentation)
+1. Test locally — both with a local server and with Docker if you changed the Dockerfile or nginx configs
+1. Submit a pull request with a clear description of what you changed and why
 
 ### What We're Looking For
 
