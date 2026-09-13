@@ -248,53 +248,35 @@ docker-push-ghcr: validate-version docker-setup ## Build and push to GHCR (multi
 docker-push-all: docker-push-local docker-push-hub docker-push-ghcr ## Push to all registries (local, Docker Hub, GHCR)
 
 .PHONY: docker-tag-latest-local
-docker-tag-latest-local: ## Tag current version as latest (local)
-	@echo '$(BLUE)Tagging $(VERSION) as latest in local registry...$(NC)'
-	docker tag $(LOCAL_IMAGE):$(VERSION) $(LOCAL_IMAGE):latest
-	docker push $(LOCAL_IMAGE):latest
-	@echo '$(GREEN)Tagged and pushed latest to local registry$(NC)'
+docker-tag-latest-local: require-registry ## Point local :latest at the EXISTING :$(VERSION) manifest
+	@# `docker tag` + `docker push` publishes only the LOCAL architecture, so :latest would have
+	@# silently lost linux/arm64 while :$(VERSION) kept it — an arm64 host pulling :latest would fail
+	@# or get an emulated amd64 image, with nothing saying so. imagetools points the tag at the same
+	@# multi-arch manifest.
+	@echo '$(BLUE)Pointing local :latest at $(VERSION)...$(NC)'
+	docker buildx imagetools create -t $(LOCAL_IMAGE):latest $(LOCAL_IMAGE):$(VERSION)
+	@echo '$(GREEN)local :latest -> $(VERSION)$(NC)'
 
 .PHONY: docker-tag-latest-hub
-docker-tag-latest-hub: docker-login-hub ## Tag current version as latest (Docker Hub, multi-arch)
-	@echo '$(BLUE)Tagging $(VERSION) as latest on Docker Hub...$(NC)'
-	DOCKER_BUILDKIT=$(DOCKER_BUILDKIT) docker buildx build \
-		--platform $(PLATFORM) \
-		--build-arg BUILDKIT_INLINE_CACHE=1 \
-		--cache-from $(DOCKER_HUB_IMAGE):$(VERSION) \
-		--build-arg BUILD_VERSION=$(VERSION) \
-		--build-arg BUILD_TIMESTAMP=$(BUILD_DATE) \
-		--label "org.opencontainers.image.created=$(BUILD_DATE)" \
-		--label "org.opencontainers.image.version=$(VERSION)" \
-		--label "org.opencontainers.image.title=LuxMark" \
-		--label "org.opencontainers.image.description=A premium browser-based markdown editor with live preview" \
-		--label "org.opencontainers.image.url=https://github.com/luxardolabs/luxmark" \
-		--label "org.opencontainers.image.source=https://github.com/luxardolabs/luxmark" \
-		--label "org.opencontainers.image.authors=luxardolabs" \
-		-t $(DOCKER_HUB_IMAGE):latest \
-		--push \
-		.
-	@echo '$(GREEN)Tagged and pushed latest to Docker Hub$(NC)'
+docker-tag-latest-hub: docker-login-hub ## Point Docker Hub :latest at the EXISTING :$(VERSION) manifest
+	@# Retag, don't rebuild — see docker-tag-latest-ghcr for why (a rebuild produced a second image
+	@# with revision=unknown). NOTE: luxardolabs/luxmark does not exist on Docker Hub; nothing has
+	@# ever been published there. These targets are unused, not policy.
+	@echo '$(BLUE)Pointing Docker Hub :latest at $(VERSION)...$(NC)'
+	docker buildx imagetools create -t $(DOCKER_HUB_IMAGE):latest $(DOCKER_HUB_IMAGE):$(VERSION)
+	@echo '$(GREEN)Docker Hub :latest -> $(VERSION)$(NC)'
 
 .PHONY: docker-tag-latest-ghcr
-docker-tag-latest-ghcr: ## Tag current version as latest (GHCR, multi-arch; uses host docker login)
-	@echo '$(BLUE)Tagging $(VERSION) as latest on GHCR...$(NC)'
-	DOCKER_BUILDKIT=$(DOCKER_BUILDKIT) docker buildx build \
-		--platform $(PLATFORM) \
-		--build-arg BUILDKIT_INLINE_CACHE=1 \
-		--cache-from $(GHCR_IMAGE):$(VERSION) \
-		--build-arg BUILD_VERSION=$(VERSION) \
-		--build-arg BUILD_TIMESTAMP=$(BUILD_DATE) \
-		--label "org.opencontainers.image.created=$(BUILD_DATE)" \
-		--label "org.opencontainers.image.version=$(VERSION)" \
-		--label "org.opencontainers.image.title=LuxMark" \
-		--label "org.opencontainers.image.description=A premium browser-based markdown editor with live preview" \
-		--label "org.opencontainers.image.url=https://github.com/luxardolabs/luxmark" \
-		--label "org.opencontainers.image.source=https://github.com/luxardolabs/luxmark" \
-		--label "org.opencontainers.image.authors=luxardolabs" \
-		-t $(GHCR_IMAGE):latest \
-		--push \
-		.
-	@echo '$(GREEN)Tagged and pushed latest to GHCR$(NC)'
+docker-tag-latest-ghcr: ## Point GHCR :latest at the EXISTING :$(VERSION) manifest (no rebuild)
+	@# RETAG, don't rebuild. The old recipe re-ran `buildx build ... -t :latest`, which produced a
+	@# SECOND image for the same source — and it omitted --build-arg BUILD_COMMIT, so `latest` carried
+	@# `revision=unknown` and a version.json with `"commit": "unknown"` while :$(VERSION) carried the
+	@# real commit. Two images, same content, one with false provenance, and nothing would have said so.
+	@# `imagetools create` points a new tag at the SAME multi-arch manifest, so the two tags are the
+	@# identical digest by construction.
+	@echo '$(BLUE)Pointing GHCR :latest at $(VERSION)...$(NC)'
+	docker buildx imagetools create -t $(GHCR_IMAGE):latest $(GHCR_IMAGE):$(VERSION)
+	@echo '$(GREEN)GHCR :latest -> $(VERSION)$(NC)'
 
 .PHONY: docker-tag-latest
 docker-tag-latest: docker-tag-latest-local docker-tag-latest-hub docker-tag-latest-ghcr ## Tag as latest in all registries
