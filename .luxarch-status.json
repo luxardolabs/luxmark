@@ -1,6 +1,6 @@
 {
   "guard": "luxarch",
-  "guard_version": "0.173.1",
+  "guard_version": "0.192.4",
   "repo": "/repo",
   "targets": [
     {
@@ -110,6 +110,33 @@
         "inert_reason": ""
       },
       {
+        "rule": "repo.makefile_no_command_substitution",
+        "status": "PASS",
+        "since": "0.185.0",
+        "violations": 0,
+        "deferred": false,
+        "inert": false,
+        "inert_reason": ""
+      },
+      {
+        "rule": "repo.guard_pins_not_overridable",
+        "status": "PASS",
+        "since": "0.187.0",
+        "violations": 0,
+        "deferred": false,
+        "inert": false,
+        "inert_reason": ""
+      },
+      {
+        "rule": "repo.guard_upgrade_verifies_write",
+        "status": "PASS",
+        "since": "0.192.0",
+        "violations": 0,
+        "deferred": false,
+        "inert": false,
+        "inert_reason": ""
+      },
+      {
         "rule": "repo.makefile_test_db_harness",
         "status": "INERT",
         "since": "0.102.0",
@@ -165,12 +192,12 @@
       },
       {
         "rule": "repo.hooks_wired",
-        "status": "INERT",
+        "status": "PASS",
         "since": "0.154.0",
         "violations": 0,
         "deferred": false,
-        "inert": true,
-        "inert_reason": "hooks are installed and wired, but there is NO heartbeat \u2014 so it cannot be confirmed they ever executed. Hooks can be disabled centrally (enterprise/user settings) while the repo looks fully protected; that is a hollow green no file scan can see. Run any agent tool call and re-check \u2014 if the heartbeat stays absent, the hooks are not running."
+        "inert": false,
+        "inert_reason": ""
       },
       {
         "rule": "repo.hooks_current",
@@ -308,6 +335,15 @@
         "inert_reason": ""
       },
       {
+        "rule": "repo.hatch_version_source_buildable",
+        "status": "PASS",
+        "since": "0.184.0",
+        "violations": 0,
+        "deferred": false,
+        "inert": false,
+        "inert_reason": ""
+      },
+      {
         "rule": "repo.app_version_calver",
         "status": "PASS",
         "since": "0.50.0",
@@ -336,18 +372,18 @@
       }
     ],
     "summary": {
-      "PASS": 28,
+      "PASS": 33,
       "FAIL": 0,
       "XFAIL": 0,
       "XPASS": 0,
-      "INERT": 4
+      "INERT": 3
     }
   },
   "summary": {
-    "PASS": 31,
+    "PASS": 36,
     "FAIL": 0,
     "XFAIL": 0,
     "XPASS": 0,
-    "INERT": 4
+    "INERT": 3
   }
 }

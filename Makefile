@@ -33,9 +33,9 @@ endif
 # PUBLIC, so no internal registry host is inlined here — the fleet gitleaks disclosure tier enforces
 # that, and a clean clone still builds/lints because every recipe references the var, not a value.
 LUX_REGISTRY     ?=
-LUXARCH_VERSION  := 0.173.1
-LUXLINT_VERSION  := 0.53.1
-LUXAUDIT_VERSION := 0.7.0
+LUXARCH_VERSION  := 0.192.4
+LUXLINT_VERSION  := 0.55.0
+LUXAUDIT_VERSION := 0.9.0
 LUXARCH_IMAGE    := $(LUX_REGISTRY)/luxardolabs/luxarch:$(LUXARCH_VERSION)
 LUXLINT_IMAGE    := $(LUX_REGISTRY)/luxardolabs/luxlint:$(LUXLINT_VERSION)
 LUXAUDIT_IMAGE   := $(LUX_REGISTRY)/luxardolabs/luxaudit:$(LUXAUDIT_VERSION)
@@ -451,19 +451,24 @@ guard-version-check: require-registry ## FAIL if any guard pin is behind the pub
 	exit $$fail
 
 .PHONY: guard-upgrade
-guard-upgrade: ## Bump every guard pin to the published latest
-	@for g in LUXARCH LUXLINT LUXAUDIT; do \
-	  lc=$$(echo $$g | tr "[:upper:]" "[:lower:]"); \
-	  docker pull -q $(LUX_REGISTRY)/luxardolabs/$$lc:latest >/dev/null 2>&1 || true; \
-	  latest=$$(docker run --rm $(LUX_REGISTRY)/luxardolabs/$$lc:latest --version 2>/dev/null | awk "{print \$$2}" | tr -d " \n"); \
-	  if [ -n "$$latest" ]; then \
-	    sed -i -E "s|^($${g}_VERSION[[:space:]]*:?=[[:space:]]*).*|\\1$$latest|" Makefile; \
-	    echo "$$lc -> $$latest"; \
-	  else \
-	    echo "$(RED)could not resolve latest for $$lc$(NC)"; exit 1; \
-	  fi; \
+guard-upgrade: require-registry  ## Bump every guard pin to the published latest (prints what newly bites)
+	@for g in luxarch luxlint luxaudit; do \
+	  docker pull -q $(LUX_REGISTRY)/luxardolabs/$$g:latest >/dev/null 2>&1 || true; \
+	  latest=$$(docker run --rm $(LUX_REGISTRY)/luxardolabs/$$g:latest --version 2>/dev/null | awk '{print $$2}'); \
+	  var=$$(echo $$g | tr a-z A-Z)_VERSION; \
+	  old=$$(sed -n -E "s/^$$var[[:space:]]*:=[[:space:]]*//p" Makefile); \
+	  if [ -z "$$old" ]; then echo "!! no $$var pin found in Makefile — NOT bumped"; continue; fi; \
+	  if [ -z "$$latest" ]; then echo "!! could not read $$g:latest — $$var left at $$old"; continue; fi; \
+	  checked=1; \
+	  sed -i -E "s|^($$var[[:space:]]*:=[[:space:]]*).*|\\1$$latest|" Makefile; \
+	  new=$$(sed -n -E "s/^$$var[[:space:]]*:=[[:space:]]*//p" Makefile); \
+	  if [ "$$new" != "$$latest" ]; then echo "!! $$var did NOT change (still $$new)"; exit 1; fi; \
+	  if [ "$$old" != "$$latest" ]; then echo "$$var $$old -> $$latest"; bumped=1; fi; \
+	  [ "$$g" = luxarch ] && [ "$$old" != "$$latest" ] && docker run --rm -v $(PWD):/repo $(LUX_REGISTRY)/luxardolabs/luxarch:$$latest --new-rules --since $$old || true; \
 	done; \
-	echo "pins bumped — re-run make check"
+	if [ -n "$$bumped" ]; then echo "pins bumped — re-run make check"; \
+	elif [ -n "$$checked" ]; then echo "all pins already at latest"; \
+	else echo "!! could not reach the registry — NO pin was checked; currency NOT established"; exit 1; fi
 
 .PHONY: honest
 honest: ## Prove no luxarch rule family scanned ZERO files (the anti-hollow-green step)
