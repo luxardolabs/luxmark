@@ -1,6 +1,6 @@
 {
   "guard": "luxaudit",
-  "guard_version": "0.9.0",
+  "guard_version": "0.12.0",
   "repo": "/repo",
   "inert": true,
   "inert_reason": "static-web app: no Python anywhere. Dependencies are 16 CDN <script>/<link> tags in src/index.html, each pinned to an immutable version and SRI-verified \u2014 enforced by luxarch's static.external_deps_pinned + static.external_deps_integrity, which is the right altitude for a markup-declared supply chain.",
@@ -8,6 +8,19 @@
     "PASS": 0,
     "FAIL": 0,
     "XFAIL": 0,
-    "INERT": 1
-  }
+    "INERT": 2
+  },
+  "image": {
+    "ref": "luxardolabs/luxmark:2026.09.0",
+    "inert": true,
+    "inert_reason": "luxardolabs/luxmark:2026.09.0: not in the registry, so nothing was released at this VERSION. A deploy that pins `:sha-\u2026` is not visible from the mount; name it in `[image] refs`",
+    "error": "",
+    "not_released": [
+      "luxardolabs/luxmark:2026.09.0"
+    ],
+    "vulnerable": [],
+    "deferred": []
+  },
+  "commit": "a6f59a06cb2b16b5745e23851e6f8894baee2eef",
+  "generated_at": "2026-10-02T13:12:10Z"
 }
