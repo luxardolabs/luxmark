@@ -25,8 +25,9 @@ services:
       - /tmp
     security_opt:
       - no-new-privileges:true
+    # 127.0.0.1, not localhost: busybox wget resolves localhost to ::1 first and nginx listens on IPv4 only.
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/"]
       interval: 30s
       timeout: 10s
       retries: 3
