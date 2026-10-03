@@ -1,0 +1,13 @@
+format: luxpm-sync-receipt/1
+project: LUXMARK
+repository_url: https://github.com/luxardolabs/luxmark
+issued_at: 2026-10-03T20:09:09+00:00
+last_activity_at: 2026-10-03T20:09:03+00:00
+stale_days: 14
+open: 4
+open_stale: 4
+closed_without_summary: 9
+open_escalations: 0
+last_known_commit: 1d96fcc79bf3ee98ca14b0bb1ce053cdd063c58d
+key_id: cbb673eafd0c3932
+signature: xwJCcpEj70C1ZCJHpGIF6Qw22kz6yxwLx/wWuT98eSoDP+CuZ0k9MrdTppJu8/mffL7dMW3zHFWr4c3U8wckCg==
