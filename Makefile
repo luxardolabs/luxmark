@@ -33,18 +33,17 @@ endif
 # PUBLIC, so no internal registry host is inlined here — the fleet gitleaks disclosure tier enforces
 # that, and a clean clone still builds/lints because every recipe references the var, not a value.
 LUX_REGISTRY     ?=
-LUXARCH_VERSION  := 0.247.1
-LUXLINT_VERSION  := 0.60.0
-LUXAUDIT_VERSION := 0.12.0
+LUXARCH_VERSION  := 0.276.0
+LUXLINT_VERSION  := 0.63.0
+LUXAUDIT_VERSION := 0.13.2
 LUXARCH_IMAGE    := $(LUX_REGISTRY)/luxardolabs/luxarch:$(LUXARCH_VERSION)
 LUXLINT_IMAGE    := $(LUX_REGISTRY)/luxardolabs/luxlint:$(LUXLINT_VERSION)
 LUXAUDIT_IMAGE   := $(LUX_REGISTRY)/luxardolabs/luxaudit:$(LUXAUDIT_VERSION)
+# The names the emitted gitleaks and guard-upgrade assets read.
+LUXLINT          := $(LUXLINT_IMAGE)
+REGISTRY         := $(LUX_REGISTRY)
 
-# The ONE shared fleet buildx builder + its GC cap (repo.shared_buildx_builder,
-# repo.buildx_builder_gc_capped).
-BUILDX_BUILDER     ?= luxardo-builder
-BUILDX_GC_KEEP     ?= 20gb
-BUILDX_GC_DURATION ?= 168h
+comma := ,
 
 # Docker registry settings
 LOCAL_REGISTRY ?= $(LUX_REGISTRY)
@@ -98,26 +97,16 @@ validate-version: ## Validate version detection
 		echo '$(GREEN)Version validation passed!$(NC)'; \
 	fi
 
-.PHONY: docker-setup
-# luxarch:buildx-setup asset v1 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit buildx-setup`.
-docker-setup: ## Set up the ONE shared fleet buildx builder (GC-capped)
-	@echo '$(BLUE)Setting up the shared fleet buildx builder...$(NC)'
-	@# ONE shared builder across the fleet, not a per-project one: a builder per repo multiplies an
-	@# uncapped cache by the number of repos and is how a disk fills silently.
-	@if ! docker buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1; then \
-	  printf '%s\n' \
-	    '[worker.oci]' \
-	    '  gc = true' \
-	    '  [[worker.oci.gcpolicy]]' \
-	    '    keepBytes = "$(BUILDX_GC_KEEP)"' \
-	    '    keepDuration = "$(BUILDX_GC_DURATION)"' \
-	    > /tmp/$(BUILDX_BUILDER)-buildkitd.toml; \
-	  docker buildx create --name $(BUILDX_BUILDER) --driver docker-container --config /tmp/$(BUILDX_BUILDER)-buildkitd.toml; \
-	fi
-	docker buildx use $(BUILDX_BUILDER)
-	@# REFUSE a stray per-project builder: `buildx create` only creates, so a repo that moved to the
-	@# shared builder leaves its old one running forever, uncapped. ALLOW_STRAY_BUILDERS=1 for a
-	@# deliberate non-fleet builder (repo.buildx_strays_refused, --doc FLEET-BUILD-DEPLOY-STANDARD).
+.PHONY: buildx-setup
+# luxarch:buildx-setup asset v2 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit buildx-setup`.
+BUILDX_BUILDER ?= luxardo-builder
+buildx-setup:
+	@mkdir -p $(HOME)/.docker
+	@[ -f $(HOME)/.docker/buildkitd.toml ] || printf '[worker.oci]\n  gc = true\n  [[worker.oci.gcpolicy]]\n    keepBytes = "20GB"\n    all = true\n' > $(HOME)/.docker/buildkitd.toml
+	@docker buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1 || \
+	  docker buildx create --name $(BUILDX_BUILDER) --driver docker-container \
+	    --buildkitd-config $(HOME)/.docker/buildkitd.toml --use
+	@docker buildx use $(BUILDX_BUILDER)
 	@strays=$$(docker buildx ls 2>/dev/null | awk '$$2=="docker-container"{print $$1}' \
 	  | grep -v '^\\_' | sed 's/\*$$//' | grep -vxF "$(BUILDX_BUILDER)" | tr '\n' ' '); \
 	if [ -n "$$strays" ] && [ -z "$(ALLOW_STRAY_BUILDERS)" ]; then \
@@ -125,7 +114,6 @@ docker-setup: ## Set up the ONE shared fleet buildx builder (GC-capped)
 	  echo "Remove them:  docker buildx rm $$strays"; \
 	  exit 1; \
 	fi
-	docker buildx inspect --bootstrap
 
 .PHONY: docker-login-hub
 docker-login-hub: ## Login to Docker Hub (uses DOCKER_HUB_TOKEN env var or prompts)
@@ -153,7 +141,7 @@ docker-pull-cache: ## Pull previous image for cache
 	@docker pull $(LOCAL_IMAGE):latest 2>/dev/null || echo "No previous image found for cache (this is normal for first builds)"
 
 .PHONY: docker-build-local
-docker-build-local: validate-version docker-setup docker-pull-cache ## Build Docker image (local load, amd64 only for fast iteration)
+docker-build-local: validate-version buildx-setup docker-pull-cache ## Build Docker image (local load, amd64 only for fast iteration)
 	@echo '$(BLUE)Building Docker image for local use (amd64 only)...$(NC)'
 	DOCKER_BUILDKIT=$(DOCKER_BUILDKIT) docker buildx build \
 		--platform $(PLATFORM_DEV) \
@@ -169,7 +157,6 @@ docker-build-local: validate-version docker-setup docker-pull-cache ## Build Doc
 		--label "org.opencontainers.image.url=https://github.com/luxardolabs/luxmark" \
 		--label "org.opencontainers.image.source=https://github.com/luxardolabs/luxmark" \
 		--label "org.opencontainers.image.authors=luxardolabs" \
-		-t $(LOCAL_IMAGE):$(VERSION) \
 		-t luxardolabs/$(PROJECT_NAME):local \
 		--load \
 		.
@@ -177,9 +164,8 @@ docker-build-local: validate-version docker-setup docker-pull-cache ## Build Doc
 
 .PHONY: build-local
 build-local: ## Build for local architecture only (quick, no buildx)
-	@echo '$(BLUE)Building $(LOCAL_IMAGE):$(VERSION) for local architecture...$(NC)'
+	@echo '$(BLUE)Building luxardolabs/$(PROJECT_NAME):local for local architecture...$(NC)'
 	@docker build \
-		--tag $(LOCAL_IMAGE):$(VERSION) \
 		--tag luxardolabs/$(PROJECT_NAME):local \
 		--build-arg BUILD_VERSION=$(VERSION) \
 		--build-arg BUILD_TIMESTAMP="$(BUILD_DATE)" \
@@ -187,73 +173,64 @@ build-local: ## Build for local architecture only (quick, no buildx)
 		.
 	@echo '$(GREEN)Build complete!$(NC)'
 
-.PHONY: docker-push-local
-docker-push-local: validate-version docker-setup docker-pull-cache ## Build and push to local registry (multi-arch: amd64 + arm64)
-	@echo '$(BLUE)Building and pushing to local registry (multi-arch)...$(NC)'
+# Publishing $(1):$(VERSION), the same way to every registry (FLEET-RELEASE-PROCESS):
+#   1. refuse a dirty tree — the tag names HEAD but the build reads the working directory;
+#   2. refuse an already-released VERSION — prod pins it, so a re-push overwrites it with other bits.
+#      Fails CLOSED: only the registry's own not-found answer reads as unreleased;
+#   3. build + push the multi-arch image as `candidate-<commit>`, a tag nothing pins;
+#   4. pull + save + scan THAT candidate with the pinned luxaudit; a finding stops here;
+#   5. point :$(VERSION) at the scanned candidate's manifest (imagetools: same digest, no rebuild).
+# $(1) image (no tag)   $(2) extra buildx cache flags
+define publish_version
+	@if [ -n "$$(git status --porcelain 2>/dev/null)" ]; then \
+	  echo "REFUSING: the working tree is dirty, so $(1):$(VERSION) would not describe commit $(BUILD_COMMIT):"; \
+	  git status --short | sed 's/^/    /'; exit 1; \
+	fi
+	@if docker manifest inspect $(1):$(VERSION) >/dev/null 2>&1; then \
+	  echo "REFUSING: $(1):$(VERSION) is already RELEASED. A released version is immutable; bump VERSION."; exit 1; \
+	fi
+	@out=$$(docker manifest inspect $(1):$(VERSION) 2>&1) || case "$$out" in \
+	  *[Nn]"o such manifest"*|*"manifest unknown"*|*"not found"*) ;; \
+	  *) echo "REFUSING: cannot verify $(1):$(VERSION) is unreleased: $$out"; exit 1 ;; \
+	esac
 	DOCKER_BUILDKIT=$(DOCKER_BUILDKIT) docker buildx build \
 		--platform $(PLATFORM) \
-		--build-arg BUILDKIT_INLINE_CACHE=1 \
-		--cache-from $(LOCAL_IMAGE):latest \
+		$(2) \
 		--build-arg BUILD_VERSION=$(VERSION) \
 		--build-arg BUILD_TIMESTAMP="$(BUILD_DATE)" \
 		--build-arg BUILD_COMMIT="$(BUILD_COMMIT)" \
 		--label "org.opencontainers.image.created=$(BUILD_DATE)" \
 		--label "org.opencontainers.image.version=$(VERSION)" \
+		--label "org.opencontainers.image.revision=$(BUILD_COMMIT)" \
 		--label "org.opencontainers.image.title=LuxMark" \
 		--label "org.opencontainers.image.description=A premium browser-based markdown editor with live preview" \
 		--label "org.opencontainers.image.url=https://github.com/luxardolabs/luxmark" \
 		--label "org.opencontainers.image.source=https://github.com/luxardolabs/luxmark" \
 		--label "org.opencontainers.image.authors=luxardolabs" \
-		-t $(LOCAL_IMAGE):$(VERSION) \
+		-t $(1):candidate-$(BUILD_COMMIT) \
 		--push \
 		.
-	@echo '$(GREEN)Pushed $(LOCAL_IMAGE):$(VERSION)$(NC)'
+	@set -e; T=$$(mktemp); trap 'rm -f "$$T"' EXIT INT TERM; \
+	docker pull -q $(1):candidate-$(BUILD_COMMIT) >/dev/null; \
+	docker save $(1):candidate-$(BUILD_COMMIT) -o "$$T"; chmod 644 "$$T"; \
+	docker run --rm -v $(PWD):/repo -v luxaudit-cache:/root/.cache/trivy -v "$$T":/candidate.tar:ro \
+	  $(LUXAUDIT_IMAGE) --image-archive /candidate.tar --image-label $(1):candidate-$(BUILD_COMMIT)
+	docker buildx imagetools create -t $(1):$(VERSION) $(1):candidate-$(BUILD_COMMIT)
+	@echo '$(GREEN)Pushed $(1):$(VERSION) (scanned candidate-$(BUILD_COMMIT))$(NC)'
+endef
+
+.PHONY: docker-push-local
+docker-push-local: validate-version require-registry buildx-setup docker-pull-cache ## Build, scan and push to local registry (multi-arch: amd64 + arm64)
+	$(call publish_version,$(LOCAL_IMAGE),--build-arg BUILDKIT_INLINE_CACHE=1 --cache-from $(LOCAL_IMAGE):latest)
 
 .PHONY: docker-push-hub
-docker-push-hub: validate-version docker-setup docker-login-hub ## Build and push to Docker Hub (multi-arch: amd64 + arm64)
-	@echo '$(BLUE)Pulling previous Docker Hub image for cache...$(NC)'
+docker-push-hub: validate-version require-registry buildx-setup docker-login-hub ## Build, scan and push to Docker Hub (multi-arch: amd64 + arm64)
 	@docker pull $(DOCKER_HUB_IMAGE):latest 2>/dev/null || echo "No previous image found for cache"
-	@echo '$(BLUE)Building and pushing to Docker Hub (multi-arch)...$(NC)'
-	DOCKER_BUILDKIT=$(DOCKER_BUILDKIT) docker buildx build \
-		--platform $(PLATFORM) \
-		--build-arg BUILDKIT_INLINE_CACHE=1 \
-		--cache-from $(DOCKER_HUB_IMAGE):latest \
-		--build-arg BUILD_VERSION=$(VERSION) \
-		--build-arg BUILD_TIMESTAMP="$(BUILD_DATE)" \
-		--build-arg BUILD_COMMIT="$(BUILD_COMMIT)" \
-		--label "org.opencontainers.image.created=$(BUILD_DATE)" \
-		--label "org.opencontainers.image.version=$(VERSION)" \
-		--label "org.opencontainers.image.title=LuxMark" \
-		--label "org.opencontainers.image.description=A premium browser-based markdown editor with live preview" \
-		--label "org.opencontainers.image.url=https://github.com/luxardolabs/luxmark" \
-		--label "org.opencontainers.image.source=https://github.com/luxardolabs/luxmark" \
-		--label "org.opencontainers.image.authors=luxardolabs" \
-		-t $(DOCKER_HUB_IMAGE):$(VERSION) \
-		--push \
-		.
-	@echo '$(GREEN)Pushed $(DOCKER_HUB_IMAGE):$(VERSION)$(NC)'
+	$(call publish_version,$(DOCKER_HUB_IMAGE),--build-arg BUILDKIT_INLINE_CACHE=1 --cache-from $(DOCKER_HUB_IMAGE):latest)
 
 .PHONY: docker-push-ghcr
-docker-push-ghcr: validate-version docker-setup ## Build and push to GHCR (multi-arch: amd64 + arm64; uses host docker login)
-	@echo '$(BLUE)Building and pushing to GHCR (multi-arch)...$(NC)'
-	DOCKER_BUILDKIT=$(DOCKER_BUILDKIT) docker buildx build \
-		--platform $(PLATFORM) \
-		--cache-from type=registry,ref=$(GHCR_IMAGE):cache \
-		--cache-to type=registry,ref=$(GHCR_IMAGE):cache,mode=max \
-		--build-arg BUILD_VERSION=$(VERSION) \
-		--build-arg BUILD_TIMESTAMP="$(BUILD_DATE)" \
-		--build-arg BUILD_COMMIT="$(BUILD_COMMIT)" \
-		--label "org.opencontainers.image.created=$(BUILD_DATE)" \
-		--label "org.opencontainers.image.version=$(VERSION)" \
-		--label "org.opencontainers.image.title=LuxMark" \
-		--label "org.opencontainers.image.description=A premium browser-based markdown editor with live preview" \
-		--label "org.opencontainers.image.url=https://github.com/luxardolabs/luxmark" \
-		--label "org.opencontainers.image.source=https://github.com/luxardolabs/luxmark" \
-		--label "org.opencontainers.image.authors=luxardolabs" \
-		-t $(GHCR_IMAGE):$(VERSION) \
-		--push \
-		.
-	@echo '$(GREEN)Pushed $(GHCR_IMAGE):$(VERSION)$(NC)'
+docker-push-ghcr: validate-version require-registry buildx-setup ## Build, scan and push to GHCR (multi-arch: amd64 + arm64; uses host docker login)
+	$(call publish_version,$(GHCR_IMAGE),--cache-from type=registry$(comma)ref=$(GHCR_IMAGE):cache --cache-to type=registry$(comma)ref=$(GHCR_IMAGE):cache$(comma)mode=max)
 
 .PHONY: docker-push-all
 docker-push-all: docker-push-local docker-push-hub docker-push-ghcr ## Push to all registries (local, Docker Hub, GHCR)
@@ -463,10 +440,10 @@ guard-version-check: require-registry ## FAIL if any guard pin is behind the pub
 
 .PHONY: guard-upgrade
 # luxarch:guard-upgrade asset v1 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit guard-upgrade`.
-guard-upgrade: require-registry  ## Bump every guard pin to the published latest (prints what newly bites)
+guard-upgrade:  ## Bump every guard pin to the published latest (prints what newly bites)
 	@for g in luxarch luxlint luxaudit; do \
-	  docker pull -q $(LUX_REGISTRY)/luxardolabs/$$g:latest >/dev/null 2>&1 || true; \
-	  latest=$$(docker run --rm $(LUX_REGISTRY)/luxardolabs/$$g:latest --version 2>/dev/null | awk '{print $$2}'); \
+	  docker pull -q $(REGISTRY)/luxardolabs/$$g:latest >/dev/null 2>&1 || true; \
+	  latest=$$(docker run --rm $(REGISTRY)/luxardolabs/$$g:latest --version 2>/dev/null | awk '{print $$2}'); \
 	  var=$$(echo $$g | tr a-z A-Z)_VERSION; \
 	  old=$$(sed -n -E "s/^$$var[[:space:]]*:=[[:space:]]*//p" Makefile); \
 	  if [ -z "$$old" ]; then echo "!! no $$var pin found in Makefile — NOT bumped"; continue; fi; \
@@ -476,7 +453,7 @@ guard-upgrade: require-registry  ## Bump every guard pin to the published latest
 	  new=$$(sed -n -E "s/^$$var[[:space:]]*:=[[:space:]]*//p" Makefile); \
 	  if [ "$$new" != "$$latest" ]; then echo "!! $$var did NOT change (still $$new)"; exit 1; fi; \
 	  if [ "$$old" != "$$latest" ]; then echo "$$var $$old -> $$latest"; bumped=1; fi; \
-	  [ "$$g" = luxarch ] && [ "$$old" != "$$latest" ] && docker run --rm -v $(PWD):/repo $(LUX_REGISTRY)/luxardolabs/luxarch:$$latest --new-rules --since $$old || true; \
+	  [ "$$g" = luxarch ] && [ "$$old" != "$$latest" ] && docker run --rm -v $(PWD):/repo $(REGISTRY)/luxardolabs/luxarch:$$latest --new-rules --since $$old || true; \
 	done; \
 	if [ -n "$$bumped" ]; then echo "pins bumped — re-run make check"; \
 	elif [ -n "$$checked" ]; then echo "all pins already at latest"; \
@@ -505,7 +482,7 @@ audit: ## luxaudit — dependency CVEs. luxmark's deps are CDN tags, so expect 0
 	docker run --rm -v $(PWD):/repo $(LUXAUDIT_IMAGE)
 
 .PHONY: gitleaks gitleaks-staged
-# luxarch:gitleaks asset v7 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit gitleaks`.
+# luxarch:gitleaks asset v12 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit gitleaks`.
 # ── The privacy gate: BOTH surfaces ─────────────────────────────────────────────────────────────
 # Emitted by `luxarch --emit gitleaks`. Drop in verbatim.
 #
@@ -514,48 +491,78 @@ audit: ## luxaudit — dependency CVEs. luxmark's deps are CDN tags, so expect 0
 # scanner does not read. A repo reported `no leaks found` over 963 commits while 29 of them carried a
 # personal address in both the author and committer fields, and it would have reported exactly the
 # same thing after the scrub: identical output, opposite truth. Measured across the fleet, EIGHT
-# repos carry a personal address in history and two of them are PUBLIC (LUXTASTE-339).
-#
-# FLEET-ONBOARDING-STANDARD §2 uses one of those very addresses as its worked example of a leak the
-# full-history scan exists to catch. The standard named the leak and the gate could not see it.
+# repos carry a personal address in history and two of them are PUBLIC.
 
 # Commit identities this repo accepts. The fleet account's `users.noreply.github.com` address, plus
 # GitHub's own web-UI committer. Widen ONLY for a real outside contributor, with a comment saying who.
 # NOT for the org account's real address: a role mailbox in commit metadata is published with every
-# clone exactly like a personal one (six fleet repos carried it, one PUBLIC; OPENCLAIM-359). Its
+# clone exactly like a personal one (six fleet repos carried it, one PUBLIC). Its
 # omission here is the policy, not an oversight: the answer is the scrub printed below, and the
 # repo's agent performs it once the OWNER approves the force-push.
 # Anchored on the CLOSING BRACKET, because the compared line is `Name <email>` — not a bare
 # address. The first cut allowed `^noreply@github.com$$`, which can NEVER match a
 # `Name <email>` line, so the GitHub web-UI identity was silently DENIED and the canonical
 # recipe would have refused on any repo carrying a web-UI commit. Measured across the fleet: it
-# denied 4 of 6 distinct identity lines instead of the 3 real offenders (LUXTRMNL-21).
+# denied 4 of 6 distinct identity lines instead of the 3 real offenders.
 # It was missed because the only repo it was tested on has no web-UI commits, so the broken
 # branch never ran. The bracket also closes a substring hole: unanchored,
 # `<x@users.noreply.github.com.attacker.test>` would have been allowed.
-GIT_IDENTITY_OK ?= <[^>]*users\.noreply\.github\.com>$$|<noreply@github\.com>$$
+# v11: the noreply address is `<local@users.noreply.github.com>`, and the local part has no `@`. v10's
+# `<[^>]*users…` admitted `<dev.real@gmail.com.users.noreply.github.com>`, a real address in the clear.
+# v12: the fleet ACCOUNT, not any noreply address. v11 accepted `<anyone@users.noreply.github.com>`, so a
+# stranger's (or a second account's) noreply committer passed. Measured: the fleet's whole history holds
+# exactly two noreply identities, the fleet account and GitHub's web-UI committer.
+GIT_IDENTITY_OK ?= <214140984\+luxardolabs@users\.noreply\.github\.com>$$|<noreply@github\.com>$$
 
-# The secret scanner, PINNED and MIRRORED in the fleet registry (LUXASIF-29). The fleet bans a moving tag
+# The secret scanner, PINNED and MIRRORED in the fleet registry. The fleet bans a moving tag
 # everywhere it can see one, and this used to ship `ghcr.io/gitleaks/gitleaks:latest` inside the asset every
 # repo adopts verbatim: the privacy gate could not run with ghcr unreachable or the local copy pruned, and
 # nothing recorded which scanner said "no leaks found". New detection rules still arrive, through the fleet's
 # own mechanism: luxarch bumps this pin in a release, and `repo.emitted_assets_current` tells you to re-emit.
-# v5: the HOST is never written here (LUXSTATS-115). v4 inlined the private registry, so dropping
+# v5: the HOST is never written here. v4 inlined the private registry, so dropping
 # this asset in "verbatim" put the host into a committed Makefile, and on a public repo the fleet's
 # own gitleaks disclosure tier refused the commit. The mirror lives beside the guards, so the ref is
-# derived from wherever this repo already pulls luxlint (`$(LUXLINT_IMAGE)`, which the scan below needs
+# derived from wherever this repo already pulls luxlint (`$(LUXLINT)`, which the scan below needs
 # anyway). It works whichever variable holds your guard registry (REGISTRY, LUXARCH_REGISTRY, …).
 # Recursive `=` so it resolves at use, whatever order LUXLINT is defined in.
-GITLEAKS_IMAGE = $(dir $(LUXLINT_IMAGE))gitleaks:v8.30.1
+# v9: PINNED BY DIGEST, and buildable off-network. The digest is the scanner's identity; the registry is
+# only where it is fetched from. Beside a registry-qualified `$(LUXLINT)` it pulls the fleet mirror; with
+# a local guard build (`luxlint:local`, on a machine with no access to the fleet registry, such as an
+# airgapped laptop) it pulls the public image. v8 derived `./gitleaks:…` there, an unpullable reference, so the
+# privacy gate could not run at all. The mirror and the public image share the digest, so both
+# resolve to the same bits, and a tampered or re-tagged copy fails the pull instead of scanning.
+GITLEAKS_IMAGE = $(if $(findstring /,$(LUXLINT)),$(dir $(LUXLINT)),zricethezav/)gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
 
 gitleaks: ## secret scan over FULL HISTORY + the commit-identity pass (the hooks cover commit/push)
-	@docker run --rm -v $(PWD):/repo $(LUXLINT_IMAGE) --emit-config gitleaks > /tmp/gl.toml
-	@docker run --rm -v $(PWD):/repo -v /tmp/gl.toml:/gl.toml:ro \
-	  $(GITLEAKS_IMAGE) git /repo -c /gl.toml --redact -v
+	@set -e; C=$$(mktemp); trap 'rm -f "$$C"' EXIT INT TERM; \
+	docker run --rm -v $(PWD):/repo $(LUXLINT) --emit-config gitleaks > "$$C"; \
+	docker run --rm -v $(PWD):/repo -v "$$C":/gl.toml:ro -w /repo \
+	  $(GITLEAKS_IMAGE) git /repo -c /gl.toml --redact -v --ignore-gitleaks-allow
+	@# v12: what `gitleaks git` never reads. It scans git's PATCHES, and git prints no patch for a file it
+	@# treats as binary: a NUL byte, UTF-16 (a `Localizable.strings`), or a `binary` / `-diff` attribute.
+	@# A token in any of them reached the remote with "no leaks found". So every path git ever showed as
+	@# binary is re-read as text, NULs stripped, and scanned by path (the config's path allowlists hold).
+	@set -e; C=$$(mktemp); D=$$(mktemp -d); trap 'rm -rf "$$C" "$$D"' EXIT INT TERM; \
+	docker run --rm -v $(PWD):/repo $(LUXLINT) --emit-config gitleaks > "$$C"; \
+	git -c core.quotePath=false log --branches --tags HEAD --format= -p --no-ext-diff --no-textconv \
+	  > "$$D/patches"; \
+	sed -n 's|^Binary files .* and b/\(.*\) differ$$|\1|p' "$$D/patches" | sort -u > "$$D/binary"; \
+	if [ -s "$$D/binary" ]; then \
+	  mkdir "$$D/t" "$$D/none"; \
+	  while IFS= read -r f; do \
+	    mkdir -p "$$D/t/$$(dirname "$$f")"; \
+	    git -c core.quotePath=false log --branches --tags HEAD --format= -p --text --no-ext-diff \
+	      --no-textconv -- "$$f" > "$$D/p"; \
+	    grep -a '^+' "$$D/p" | tr -d '\000' > "$$D/t/$$f"; \
+	  done < "$$D/binary"; \
+	  docker run --rm -v "$$D/t":/scan:ro -w /scan -v "$$D/none":/none:ro -v "$$C":/gl.toml:ro \
+	    $(GITLEAKS_IMAGE) dir . -c /gl.toml --redact -v --ignore-gitleaks-allow \
+	    --gitleaks-ignore-path /none; \
+	fi
 	@# The identity pass — the half gitleaks structurally cannot do. Cheap: one `git log`.
 	@# Walks what THIS repo publishes (branches, tags, HEAD), NOT `--all`: a remote-tracking ref caches the
 	@# remote's state, which during a scrub is by definition the un-rewritten history you are about to
-	@# force-push over — `--all` refused the verified fix, and any `git fetch` re-armed it (BOUTIQUE-577).
+	@# force-push over — `--all` refused the verified fix, and any `git fetch` re-armed it.
 	@bad=$$(git log --branches --tags HEAD --pretty='%an <%ae>%n%cn <%ce>' 2>/dev/null | sort -u \
 	  | grep -vE '$(GIT_IDENTITY_OK)' || true); \
 	if [ -n "$$bad" ]; then \
@@ -576,10 +583,33 @@ gitleaks: ## secret scan over FULL HISTORY + the commit-identity pass (the hooks
 # v7: `-w /repo` is LOAD-BEARING. Without it git runs outside the repo, falls back to `git diff
 # --no-index`, rejects `--staged`, and gitleaks EXITS 0: v6 let a staged secret through while printing
 # a git error (measured on a planted GitHub token: v6 exit 0, v7 "leaks found: 1" exit 1).
+# v8: the denylist goes to a PER-RUN `mktemp` file, removed on exit. v7 wrote a fixed
+# `/tmp/gl.toml` that outlived the run: on a host where commit and push run as different users, the
+# next user's redirect was refused (`fs.protected_regular=1`, the Fedora default, blocks O_CREAT on
+# another user's file in sticky /tmp even for root), so the privacy gate failed every commit or push
+# after a user switch (2 of 2 measured). Two repos scanning at once also shared one file, so one could
+# scan with the other's carve-outs. The full-history scan now also passes `-w /repo`, like the staged one.
+# v12: the staged bytes are read on the HOST and scanned as files, by path. v11 ran `protect --staged`
+# inside the container, which read `.git/index`, not the temporary index git hands the hook in
+# `$$GIT_INDEX_FILE`: `git commit -a` and `git commit <path>` were never scanned. It also read git's
+# patches, which skip binary, NUL, UTF-16 and `-diff` files, and it honoured a `# gitleaks:allow` on
+# the secret's own line and a committed `.gitleaksignore`, so a commit's author could waive their own
+# leak. New content gets no waiver: `.gitleaksignore` stays a ledger for the full-history scan only.
 gitleaks-staged: ## secret scan of the STAGED changes (run by hooks/pre-commit)
-	@docker run --rm -v $(PWD):/repo $(LUXLINT_IMAGE) --emit-config gitleaks > /tmp/gl.toml
-	@docker run --rm -v $(PWD):/repo -v /tmp/gl.toml:/gl.toml:ro -w /repo \
-	  $(GITLEAKS_IMAGE) protect --staged /repo -c /gl.toml --redact -v
+	@set -e; C=$$(mktemp); D=$$(mktemp -d); trap 'rm -rf "$$C" "$$D"' EXIT INT TERM; \
+	docker run --rm -v $(PWD):/repo $(LUXLINT) --emit-config gitleaks > "$$C"; \
+	mkdir "$$D/t" "$$D/none"; \
+	git -c core.quotePath=false diff --cached --name-only --diff-filter=ACMR -z > "$$D/names"; \
+	tr '\000' '\n' < "$$D/names" | while IFS= read -r f; do \
+	  [ -n "$$f" ] || continue; \
+	  mkdir -p "$$D/t/$$(dirname "$$f")"; \
+	  git -c core.quotePath=false diff --cached --text --no-ext-diff --no-textconv -U0 -- "$$f" \
+	    > "$$D/p"; \
+	  grep -a '^+' "$$D/p" | tr -d '\000' > "$$D/t/$$f"; \
+	done; \
+	docker run --rm -v "$$D/t":/scan:ro -w /scan -v "$$D/none":/none:ro -v "$$C":/gl.toml:ro \
+	  $(GITLEAKS_IMAGE) dir . -c /gl.toml --redact -v --ignore-gitleaks-allow \
+	  --gitleaks-ignore-path /none
 
 .PHONY: check
 check: guard-version-check honest lint test arch audit gitleaks ## THE gate — every wired guard

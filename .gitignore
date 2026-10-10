@@ -53,3 +53,6 @@ test.html
 
 # Site-local topology (registry host, node names) — Makefile.local.example is the committed template
 Makefile.local
+
+# Claude Code hook session state (luxarch --emit hooks)
+.claude/.luxpm-searched.json

@@ -20,6 +20,10 @@ LABEL org.opencontainers.image.title="luxmark" \
       app.name="luxmark" \
       app.version="${BUILD_VERSION}"
 
+# Upgrade the base's OS packages: nginx:alpine lags Alpine's security fixes, and the release gate
+# (`luxaudit --image-archive`) refuses a candidate carrying a fixable HIGH/CRITICAL.
+RUN apk upgrade --no-cache
+
 # Add security headers and configurations
 RUN rm /etc/nginx/conf.d/default.conf
 
