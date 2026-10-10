@@ -97,7 +97,7 @@ for (const [target, image] of Object.entries(TARGETS)) {
     assert.match(build[0], new RegExp(`-t ${PRIVATE}:candidate-${r.commit} --push`), 'candidates go to the private registry only');
     assert.doesNotMatch(build[0], new RegExp(`:${VERSION}\\b`), 'the build must never push :VERSION directly');
     const promote = promotions(r.calls);
-    assert.deepEqual(promote, [`docker buildx imagetools create -t ${image}:${VERSION} ${PRIVATE}:candidate-${r.commit}@${DIGEST}`]);
+    assert.deepEqual(promote, [`docker buildx imagetools create -t ${image}:${VERSION} ${PRIVATE}@${DIGEST}`]);
     const lastScan = r.calls.lastIndexOf(scans(r.calls).at(-1));
     assert.ok(lastScan >= 0 && r.calls.indexOf(promote[0]) > lastScan, `every scan must run before :VERSION is created\n${r.trace}`);
   });

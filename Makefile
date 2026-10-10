@@ -225,25 +225,24 @@ define publish_version
 	  --label "org.opencontainers.image.source=https://github.com/luxardolabs/luxmark" \
 	  --label "org.opencontainers.image.authors=luxardolabs" \
 	  -t "$$cand" --push '$(CURDIR)'; \
-	digest=$$(docker buildx imagetools inspect "$$cand" --format '{{json .Manifest.Digest}}' | tr -d '"'); \
-	case "$$digest" in sha256:*) ;; *) echo "REFUSING: cannot read the digest of $$cand"; exit 1 ;; esac; \
-	plats=$$(docker buildx imagetools inspect "$$cand@$$digest" --raw | python3 -c 'import json, sys; [print(m["platform"]["os"] + "/" + m["platform"]["architecture"], m["digest"]) for m in json.load(sys.stdin)["manifests"] if m.get("platform", {}).get("os", "unknown") != "unknown"]'); \
+	repo='$(LOCAL_IMAGE)'; ref='$(LUXAUDIT_IMAGE)'; \
+	index=$$(docker buildx imagetools inspect "$$cand" --format '{{json .Manifest.Digest}}' | tr -d '"'); \
+	case "$$index" in sha256:*) ;; *) echo "REFUSING: could not read the index digest of $$cand"; exit 1 ;; esac; \
+	plats=$$(docker buildx imagetools inspect "$$repo@$$index" --raw | python3 -c 'import json, sys; [print(m["platform"]["os"] + "/" + m["platform"]["architecture"], m["digest"]) for m in json.load(sys.stdin)["manifests"] if m.get("platform", {}).get("os", "unknown") != "unknown"]'); \
 	for p in $$(echo '$(PLATFORM)' | tr ',' ' '); do \
-	  echo "$$plats" | grep -q "^$$p " || { echo "REFUSING: $$cand@$$digest has no $$p image"; exit 1; }; \
+	  echo "$$plats" | grep -q "^$$p " || { echo "REFUSING: $$repo@$$index has no $$p image"; exit 1; }; \
 	done; \
-	scan='$(PROJECT_NAME)-release-scan:local'; \
-	T=$$(mktemp); trap 'rm -f "$$T"; docker rmi -f "$$scan" >/dev/null 2>&1 || true' EXIT INT TERM; \
-	for pd in $$(echo "$$plats" | tr ' ' '='); do \
-	  p=$${pd%%=*}; d=$${pd#*=}; \
-	  docker pull -q "$${cand%:*}@$$d" >/dev/null; \
-	  docker tag "$${cand%:*}@$$d" "$$scan"; \
-	  docker save "$$scan" -o "$$T"; chmod 644 "$$T"; \
-	  [ -s "$$T" ] || { echo "REFUSING: docker save wrote an empty archive for $$p"; exit 1; }; \
+	T=$$(mktemp); trap 'rm -f "$$T"; docker rmi $(PROJECT_NAME):release-scan >/dev/null 2>&1 || true' EXIT INT TERM; \
+	echo "$$plats" | while read -r plat digest; do \
+	  docker pull -q "$$repo@$$digest" >/dev/null; \
+	  docker tag "$$repo@$$digest" $(PROJECT_NAME):release-scan; \
+	  docker save $(PROJECT_NAME):release-scan -o "$$T"; chmod 644 "$$T"; \
+	  [ -s "$$T" ] || { echo "REFUSING: docker save wrote an empty archive for $$plat"; exit 1; }; \
 	  docker run --rm -v '$(CURDIR)':/repo -v luxaudit-cache:/root/.cache/trivy -v "$$T":/candidate.tar:ro \
-	    $(LUXAUDIT_IMAGE) --image-archive /candidate.tar --image-label "$$cand $$p ($$d)"; \
+	    "$$ref" --image-archive /candidate.tar --image-label "$$cand $$plat ($$digest)" || exit 1; \
 	done; \
-	docker buildx imagetools create -t '$(1):$(VERSION)' "$$cand@$$digest"; \
-	printf '$(GREEN)Pushed %s = %s (scanned: %s)$(NC)\n' '$(1):$(VERSION)' "$$cand@$$digest" '$(PLATFORM)'
+	docker buildx imagetools create -t '$(1):$(VERSION)' "$$repo@$$index"; \
+	printf '$(GREEN)Pushed %s = %s (every platform scanned)$(NC)\n' '$(1):$(VERSION)' "$$repo@$$index"
 endef
 
 .PHONY: docker-push-local
