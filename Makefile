@@ -225,7 +225,7 @@ define publish_version
 	  --label "org.opencontainers.image.authors=luxardolabs" \
 	  -t "$$cand" --push '$(CURDIR)'; \
 	digest=$$(docker buildx imagetools inspect "$$cand" --format '{{json .Manifest}}' \
-	  | grep -o '"digest":"sha256:[0-9a-f]*"' | head -1 | cut -d'"' -f4); \
+	  | grep -o '"digest": *"sha256:[0-9a-f]*"' | head -1 | grep -o 'sha256:[0-9a-f]*'); \
 	[ -n "$$digest" ] || { echo "REFUSING: cannot read the digest of $$cand"; exit 1; }; \
 	T=$$(mktemp); trap 'rm -f "$$T"' EXIT INT TERM; \
 	for p in $$(echo '$(PLATFORM)' | tr ',' ' '); do \

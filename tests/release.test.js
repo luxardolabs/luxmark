@@ -19,6 +19,8 @@ const VERSION = readFileSync(join(root, 'VERSION'), 'utf8').trim();
 const DIGEST = 'sha256:' + 'ab'.repeat(32);
 const PRIVATE = 'reg.test/luxardolabs/luxmark';
 
+// `imagetools inspect --format '{{json .Manifest}}'` is PRETTY-printed by buildx (`"digest": "…"`, the
+// index digest first, then each platform's); the fake prints it the same way.
 // MANIFEST: notfound | exists | unreachable   REVISION: revision label of an existing :VERSION
 // SCAN: pass | fail
 const FAKE_DOCKER = `#!/bin/sh
@@ -33,7 +35,7 @@ case "$1 $2" in
   "buildx imagetools")
     case "$*" in
       *inspect*Image*) echo '{"linux/amd64":{"config":{"Labels":{"org.opencontainers.image.revision":"'"$REVISION"'"}}},"linux/arm64":{"config":{"Labels":{"org.opencontainers.image.revision":"'"$REVISION"'"}}}}' ;;
-      *inspect*Manifest*) echo '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","digest":"${DIGEST}","size":1}' ;;
+      *inspect*Manifest*) printf '{\\n  "schemaVersion": 2,\\n  "mediaType": "application/vnd.oci.image.index.v1+json",\\n  "digest": "${DIGEST}",\\n  "size": 1609,\\n  "manifests": [\\n    {\\n      "digest": "sha256:${'cd'.repeat(32)}"\\n    }\\n  ]\\n}\\n' ;;
     esac; exit 0 ;;
   "buildx ls") exit 0 ;;
 esac
