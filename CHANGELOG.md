@@ -6,6 +6,10 @@ Writing guide: [`src/change_logs/writing-guide.md`](src/change_logs/writing-guid
 
 ## Current
 
+- **[2026.10.0](src/change_logs/2026.10.0.md)** — CSP drops script `unsafe-inline`/`unsafe-eval`; base image patched (10 HIGH CVEs); releases scanned on every platform before publishing.
+
+## Earlier (CalVer)
+
 - **[2026.09.0](src/change_logs/2026.09.0.md)** — onboarded to the fleet guards; CDN supply chain pinned and hash-verified; rendered markdown sanitized; first test suite. Versioning moved SemVer → CalVer.
 
 ## Before CalVer (historical, SemVer)

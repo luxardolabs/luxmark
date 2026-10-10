@@ -6,4 +6,8 @@ Writing guide: [`src/release_notes/writing-guide.md`](src/release_notes/writing-
 
 ## Current
 
+- **[2026.10.0](src/release_notes/2026.10.0.md)** — stronger protection against injected scripts, and a patched, security-checked image.
+
+## Earlier
+
 - **[2026.09.0](src/release_notes/2026.09.0.md)** — date-based versioning, and every CDN library is now version-locked and fingerprint-checked in your browser.
