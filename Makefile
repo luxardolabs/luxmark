@@ -325,7 +325,7 @@ release: docker-push-all docker-tag-latest ## Full release: version + latest to 
 .PHONY: test
 test: ## Run the test suite (node:test, in docker — no npm install, no build step)
 	@echo '$(BLUE)Running the luxmark test suite...$(NC)'
-	docker run --rm -v $(PWD):/w -w /w node:22-alpine node --test 'tests/*.test.js'
+	docker run --rm -v $(PWD):/w -w /w node:22 node --test 'tests/*.test.js'
 
 .PHONY: serve
 serve: ## Run the container locally on :8080 (was `make test` — that name now runs the SUITE)
