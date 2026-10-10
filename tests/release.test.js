@@ -18,11 +18,13 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const VERSION = readFileSync(join(root, 'VERSION'), 'utf8').trim();
 const DIGEST = 'sha256:' + 'ab'.repeat(32);
 const PRIVATE = 'reg.test/luxardolabs/luxmark';
+const AMD64 = 'sha256:' + 'a1'.repeat(32);
+const ARM64 = 'sha256:' + 'a2'.repeat(32);
 
 // `imagetools inspect --format '{{json .Manifest}}'` is PRETTY-printed by buildx (`"digest": "…"`, the
 // index digest first, then each platform's); the fake prints it the same way.
 // MANIFEST: notfound | exists | unreachable   REVISION: revision label of an existing :VERSION
-// SCAN: pass | fail
+// SCAN: pass | fail   PLATS: amd64only drops arm64 from the candidate's index
 const FAKE_DOCKER = `#!/bin/sh
 echo "docker $*" >> "$DOCKER_LOG"
 case "$1 $2" in
@@ -35,6 +37,8 @@ case "$1 $2" in
   "buildx imagetools")
     case "$*" in
       *inspect*Image*) echo '{"linux/amd64":{"config":{"Labels":{"org.opencontainers.image.revision":"'"$REVISION"'"}}},"linux/arm64":{"config":{"Labels":{"org.opencontainers.image.revision":"'"$REVISION"'"}}}}' ;;
+      *inspect*Manifest.Digest*) echo '"${DIGEST}"' ;;
+      *inspect*--raw*) printf '{\\n  "manifests": [\\n    {"digest": "${AMD64}", "platform": {"os": "linux", "architecture": "amd64"}},\\n    {"digest": "${ARM64}", "platform": {"os": "linux", "architecture": "arm64"}},\\n    {"digest": "sha256:${'ee'.repeat(32)}", "platform": {"os": "unknown", "architecture": "unknown"}}\\n  ]\\n}\\n' | { [ "$PLATS" = amd64only ] && grep -v arm64 || cat; } ;;
       *inspect*Manifest*) printf '{\\n  "schemaVersion": 2,\\n  "mediaType": "application/vnd.oci.image.index.v1+json",\\n  "digest": "${DIGEST}",\\n  "size": 1609,\\n  "manifests": [\\n    {\\n      "digest": "sha256:${'cd'.repeat(32)}"\\n    }\\n  ]\\n}\\n' ;;
     esac; exit 0 ;;
   "buildx ls") exit 0 ;;
@@ -60,7 +64,7 @@ function sandbox() {
   return { parent, dir, commit };
 }
 
-function publish(target, { manifest = 'notfound', revision = '', scan = 'pass', setup = () => {}, args = [], fromParent = false, env = {} } = {}) {
+function publish(target, { manifest = 'notfound', revision = '', scan = 'pass', plats = 'both', setup = () => {}, args = [], fromParent = false, env = {} } = {}) {
   const sb = sandbox();
   setup(sb);
   const log = join(sb.parent, 'docker.log');
@@ -69,7 +73,7 @@ function publish(target, { manifest = 'notfound', revision = '', scan = 'pass', 
   const r = spawnSync('make', ['--no-print-directory', ...makeArgs, ...args, target, 'LUX_REGISTRY=reg.test'], {
     cwd: fromParent ? sb.parent : sb.dir,
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${sb.parent}:${process.env.PATH}`, DOCKER_LOG: log, MANIFEST: manifest, REVISION: typeof revision === 'function' ? revision(sb) : revision, SCAN: scan, ...env },
+    env: { ...process.env, PATH: `${sb.parent}:${process.env.PATH}`, DOCKER_LOG: log, MANIFEST: manifest, REVISION: typeof revision === 'function' ? revision(sb) : revision, SCAN: scan, PLATS: plats, ...env },
   });
   const calls = readFileSync(log, 'utf8').split('\n').filter(Boolean);
   return { ...sb, status: r.status, out: r.stdout + r.stderr, calls, trace: calls.join('\n') };
@@ -108,12 +112,22 @@ for (const [target, image] of Object.entries(TARGETS)) {
 test('every platform of the candidate digest is scanned, each against this repo\'s .luxaudit.toml', () => {
   const r = publish('docker-push-ghcr', { fromParent: true });
   assert.equal(r.status, 0, r.out);
-  for (const p of ['linux/amd64', 'linux/arm64']) {
-    assert.ok(r.calls.includes(`docker pull -q --platform ${p} ${PRIVATE}:candidate-${r.commit}@${DIGEST}`), `${p} not pulled by digest\n${r.trace}`);
+  // Each platform by its OWN manifest digest: pulling the shared index digest per platform makes the
+  // second pull fail with "cannot overwrite digest" (seen on the first real 2026.10.0 run).
+  for (const d of [AMD64, ARM64]) {
+    assert.ok(r.calls.includes(`docker pull -q ${PRIVATE}@${d}`), `${d} not pulled by its own digest\n${r.trace}`);
   }
+  assert.ok(!r.calls.some((c) => c.includes('unknown') || c.includes('ee'.repeat(32))), 'attestation entries are not images');
   const s = scans(r.calls);
   assert.equal(s.length, 2, r.trace);
   for (const c of s) assert.ok(c.includes(`-v ${r.dir}:/repo `), `scan must mount the repo, not the caller's directory:\n${c}`);
+});
+
+test('a candidate missing a platform in $(PLATFORM) is refused, never promoted', () => {
+  const r = publish('docker-push-ghcr', { plats: 'amd64only' });
+  assert.notEqual(r.status, 0);
+  assert.match(r.out, /linux\/arm64/);
+  assert.equal(promotions(r.calls).length, 0, r.trace);
 });
 
 test('make -i cannot skip past a failed scan into a promotion', () => {

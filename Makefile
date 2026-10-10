@@ -182,8 +182,9 @@ build-local: ## Build for local architecture only (quick, no buildx)
 #      the registry's own not-found refuses (fails closed);
 #   3. build + push the multi-arch candidate to the PRIVATE registry only, so an image the scan
 #      rejects is never public, and pin it by DIGEST (the candidate tag is mutable);
-#   4. scan EVERY platform of that digest with the pinned luxaudit, reading this repo's
-#      .luxaudit.toml ($(CURDIR), not the caller's $(PWD) under `make -C`);
+#   4. scan EVERY platform of that digest, each pulled by its OWN manifest digest (pulling the shared
+#      index digest per platform fails: "cannot overwrite digest"), refusing a missing platform, with
+#      the pinned luxaudit reading this repo's .luxaudit.toml ($(CURDIR), not the caller's $(PWD));
 #   5. point $(1):$(VERSION) at the scanned digest (imagetools copies across registries, same digest).
 # $(1) destination image (no tag)   $(2) extra buildx cache flags
 RESUME_HINT := make release-hub and/or make release-ghcr for each registry still missing it, then make docker-tag-latest-local
@@ -224,19 +225,22 @@ define publish_version
 	  --label "org.opencontainers.image.source=https://github.com/luxardolabs/luxmark" \
 	  --label "org.opencontainers.image.authors=luxardolabs" \
 	  -t "$$cand" --push '$(CURDIR)'; \
-	digest=$$(docker buildx imagetools inspect "$$cand" --format '{{json .Manifest}}' \
-	  | grep -o '"digest": *"sha256:[0-9a-f]*"' | head -1 | grep -o 'sha256:[0-9a-f]*'); \
-	[ -n "$$digest" ] || { echo "REFUSING: cannot read the digest of $$cand"; exit 1; }; \
-	T=$$(mktemp); trap 'rm -f "$$T"' EXIT INT TERM; \
+	digest=$$(docker buildx imagetools inspect "$$cand" --format '{{json .Manifest.Digest}}' | tr -d '"'); \
+	case "$$digest" in sha256:*) ;; *) echo "REFUSING: cannot read the digest of $$cand"; exit 1 ;; esac; \
+	plats=$$(docker buildx imagetools inspect "$$cand@$$digest" --raw | python3 -c 'import json, sys; [print(m["platform"]["os"] + "/" + m["platform"]["architecture"], m["digest"]) for m in json.load(sys.stdin)["manifests"] if m.get("platform", {}).get("os", "unknown") != "unknown"]'); \
 	for p in $$(echo '$(PLATFORM)' | tr ',' ' '); do \
-	  scan="$(PROJECT_NAME)-scan:$$(echo $$p | tr '/' '-')"; \
-	  docker pull -q --platform "$$p" "$$cand@$$digest" >/dev/null; \
-	  docker tag "$$cand@$$digest" "$$scan"; \
+	  echo "$$plats" | grep -q "^$$p " || { echo "REFUSING: $$cand@$$digest has no $$p image"; exit 1; }; \
+	done; \
+	scan='$(PROJECT_NAME)-release-scan:local'; \
+	T=$$(mktemp); trap 'rm -f "$$T"; docker rmi -f "$$scan" >/dev/null 2>&1 || true' EXIT INT TERM; \
+	for pd in $$(echo "$$plats" | tr ' ' '='); do \
+	  p=$${pd%%=*}; d=$${pd#*=}; \
+	  docker pull -q "$${cand%:*}@$$d" >/dev/null; \
+	  docker tag "$${cand%:*}@$$d" "$$scan"; \
 	  docker save "$$scan" -o "$$T"; chmod 644 "$$T"; \
 	  [ -s "$$T" ] || { echo "REFUSING: docker save wrote an empty archive for $$p"; exit 1; }; \
 	  docker run --rm -v '$(CURDIR)':/repo -v luxaudit-cache:/root/.cache/trivy -v "$$T":/candidate.tar:ro \
-	    $(LUXAUDIT_IMAGE) --image-archive /candidate.tar --image-label "$$cand@$$digest ($$p)"; \
-	  docker rmi -f "$$scan" >/dev/null 2>&1 || true; \
+	    $(LUXAUDIT_IMAGE) --image-archive /candidate.tar --image-label "$$cand $$p ($$d)"; \
 	done; \
 	docker buildx imagetools create -t '$(1):$(VERSION)' "$$cand@$$digest"; \
 	printf '$(GREEN)Pushed %s = %s (scanned: %s)$(NC)\n' '$(1):$(VERSION)' "$$cand@$$digest" '$(PLATFORM)'
