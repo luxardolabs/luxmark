@@ -25,3 +25,11 @@ test('nginx still listens IPv4-only, so the 127.0.0.1 healthcheck still applies'
   // If nginx gains an IPv6 listener this test should be revisited along with the healthcheck.
   assert.doesNotMatch(nginxConf, /listen\s+\[::\]/);
 });
+
+test('the container answers as `luxmark`, the name the edge proxy routes to', () => {
+  // The OVH edge (nginx-ovh conf.d/luxmark.luxardolabs.com.conf) proxies to http://luxmark:8080 on the
+  // shared `luxardolabs` network. The container name stays prefixed (repo.compose_conventions), so the
+  // edge's name is a network alias; without it the site can't reach the container.
+  assert.match(compose, /^\s+container_name:\s*luxmark-web\s*$/m);
+  assert.match(compose, /networks:\n\s+luxardolabs:\n\s+aliases:\n\s+- luxmark\s*$/m);
+});

@@ -391,6 +391,63 @@ deploy-local: ## Deploy to local environment
 	@docker compose -f compose.yml up -d
 	@echo '$(GREEN)Local deployment complete$(NC)'
 
+# =============================================================================
+# Production — the OVH node ($(PROD_NODE)) reached via the jump host ($(PROD_JUMP)), the same box
+# and the same shape as www and luxof.life. The node PULLS the public GHCR image at :$(VERSION);
+# compose never builds. TLS and routing come from the edge nginx-ovh, which proxies
+# luxmark.luxardolabs.com to http://luxmark:8080 (hence the service/container name in compose.yml).
+# The node topology lives in the gitignored Makefile.local (this repo is public). After a release:
+#   make release-ghcr   # build + scan every platform + promote :$(VERSION) (and :latest) on GHCR
+#   make gh-release     # the GitHub Release
+#   make prod-deploy    # sync compose.yml, pin .env to :$(VERSION), pull + recreate, verify the live site
+# Roll back by deploying an older released version: make prod-deploy MANUAL_VERSION=<x.y.z>
+# =============================================================================
+PROD_URL     ?= https://luxmark.luxardolabs.com
+# The node trusts only the jump host's key (no ProxyJump), so commands cross TWO ssh hops. Each hop's
+# shell would re-parse a command line (`a; b` ran `b` on the jump host), so every remote step is a
+# script on STDIN to `sh -s`, which passes both hops untouched.
+PROD_SH       = ssh -o BatchMode=yes $(PROD_JUMP) ssh -o BatchMode=yes root@$(PROD_NODE) sh -s
+# -f is explicit: never let compose auto-pick (a compose.yaml beside compose.yml silently wins).
+PROD_COMPOSE := docker compose -f compose.yml
+PROD_WAIT    ?= 90
+
+.PHONY: require-prod prod-sync prod-deploy prod-ps prod-logs prod-health
+require-prod: ## Fail with the remedy when the prod node topology (Makefile.local) is absent
+	@if [ -z "$(PROD_JUMP)" ] || [ -z "$(PROD_NODE)" ] || [ -z "$(PROD_DIR)" ]; then \
+	  echo '$(RED)PROD_JUMP / PROD_NODE / PROD_DIR unset: set them in Makefile.local (see Makefile.local.example).$(NC)'; \
+	  exit 1; \
+	fi
+
+prod-sync: require-prod ## Push compose.yml to the node (the repo is the source of truth)
+	@# A hand-placed compose.yaml predates the synced compose.yml: kept beside it, renamed, never deleted.
+	@printf '%s\n' 'set -e; mkdir -p $(PROD_DIR); cd $(PROD_DIR)' \
+	  "echo $$(base64 -w0 compose.yml) | base64 -d > compose.yml.new && mv compose.yml.new compose.yml" \
+	  'if [ -f compose.yaml ]; then mv compose.yaml compose.yaml.pre-compose-yml; echo "renamed the old compose.yaml to compose.yaml.pre-compose-yml"; fi' \
+	  'sha256sum compose.yml' | $(PROD_SH)
+	@echo "local: $$(sha256sum compose.yml)"
+	@echo '$(GREEN)synced compose.yml to $(PROD_NODE):$(PROD_DIR)$(NC)'
+
+prod-deploy: require-prod prod-sync ## Pin the node to :$(VERSION), pull, recreate, wait healthy, verify the live site
+	@out=$$(docker manifest inspect $(GHCR_IMAGE):$(VERSION) 2>&1) || { \
+	  echo '$(RED)REFUSING: $(GHCR_IMAGE):$(VERSION) is not published (run the release first): '"$$out"'$(NC)'; exit 1; }
+	@echo '$(BLUE)Deploying $(GHCR_IMAGE):$(VERSION) to $(PROD_NODE):$(PROD_DIR)...$(NC)'
+	@printf '%s\n' 'set -e; cd $(PROD_DIR)' 'printf "TAG=%s\n" "$(VERSION)" > .env' \
+	  '$(PROD_COMPOSE) pull' '$(PROD_COMPOSE) up -d --wait --wait-timeout $(PROD_WAIT)' \
+	  'docker inspect -f "{{.Name}} {{.State.Health.Status}} {{.Config.Image}}" luxmark-web' | $(PROD_SH)
+	@got=$$(curl -fsS --max-time 10 $(PROD_URL)/version.json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["version"], d["commit"])'); \
+	case "$$got" in "$(VERSION) "*) echo '$(GREEN)live: $(PROD_URL) serves '"$$got"'$(NC)';; \
+	  *) echo '$(RED)DEPLOY NOT LIVE: $(PROD_URL)/version.json reports "'"$$got"'", expected $(VERSION)$(NC)'; exit 1;; esac
+
+prod-ps: require-prod ## Prod stack status (on the node)
+	@printf '%s\n' 'cd $(PROD_DIR) && $(PROD_COMPOSE) ps' | $(PROD_SH)
+
+prod-logs: require-prod ## Tail prod logs (on the node; Ctrl-C to stop)
+	ssh -t $(PROD_JUMP) "ssh -t root@$(PROD_NODE) 'cd $(PROD_DIR) && $(PROD_COMPOSE) logs -f --tail 100'"
+
+prod-health: require-prod ## The container's own healthcheck plus what the live site serves
+	@printf '%s\n' 'docker inspect -f "luxmark-web: {{.State.Status}} {{.State.Health.Status}} {{.Config.Image}}" luxmark-web' | $(PROD_SH)
+	@curl -fsS --max-time 10 $(PROD_URL)/version.json && echo
+
 .PHONY: scan
 scan: docker-build-local ## Security scan the image
 	@echo '$(BLUE)Scanning luxardolabs/$(PROJECT_NAME):local for vulnerabilities...$(NC)'
