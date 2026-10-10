@@ -11,16 +11,16 @@
     "INERT": 2
   },
   "image": {
-    "ref": "luxardolabs/luxmark:2026.09.0",
+    "ref": "luxardolabs/luxmark:2026.10.0",
     "inert": true,
-    "inert_reason": "luxardolabs/luxmark:2026.09.0: not in the registry, so nothing was released at this VERSION. A deploy that pins `:sha-\u2026` is not visible from the mount; name it in `[image] refs`",
+    "inert_reason": "luxardolabs/luxmark:2026.10.0: not in the registry, so nothing was released at this VERSION. A deploy that pins `:sha-\u2026` is not visible from the mount; name it in `[image] refs`",
     "error": "",
     "not_released": [
-      "luxardolabs/luxmark:2026.09.0"
+      "luxardolabs/luxmark:2026.10.0"
     ],
     "vulnerable": [],
     "deferred": []
   },
-  "commit": "6ed77b18abd4f05929f5e1bcabaf79534e4d5643",
-  "generated_at": "2026-10-10T23:00:15Z"
+  "commit": "46ea44ddc4adf8626ba59f8f1d5fa1a216c875fb",
+  "generated_at": "2026-10-10T23:43:52Z"
 }
