@@ -173,50 +173,73 @@ build-local: ## Build for local architecture only (quick, no buildx)
 		.
 	@echo '$(GREEN)Build complete!$(NC)'
 
-# Publishing $(1):$(VERSION), the same way to every registry (FLEET-RELEASE-PROCESS):
-#   1. refuse a dirty tree — the tag names HEAD but the build reads the working directory;
-#   2. refuse an already-released VERSION — prod pins it, so a re-push overwrites it with other bits.
-#      Fails CLOSED: only the registry's own not-found answer reads as unreleased;
-#   3. build + push the multi-arch image as `candidate-<commit>`, a tag nothing pins;
-#   4. pull + save + scan THAT candidate with the pinned luxaudit; a finding stops here;
-#   5. point :$(VERSION) at the scanned candidate's manifest (imagetools: same digest, no rebuild).
-# $(1) image (no tag)   $(2) extra buildx cache flags
+# Publishing $(1):$(VERSION), the same way to every registry (FLEET-RELEASE-PROCESS). The gate runs in ONE
+# shell with `set -e`, so no step can be skipped past (`make -i`, `.IGNORE`) and every failure stops it:
+#   1. refuse a tree that is dirty, or whose status git cannot read (another uid's checkout: a failed
+#      `git status` prints nothing, which must never read as clean);
+#   2. refuse an existing :$(VERSION) (released tags are immutable; prod pins them), naming the
+#      per-registry targets that resume an interrupted `make release`. Any lookup error other than
+#      the registry's own not-found refuses (fails closed);
+#   3. build + push the multi-arch candidate to the PRIVATE registry only, so an image the scan
+#      rejects is never public, and pin it by DIGEST (the candidate tag is mutable);
+#   4. scan EVERY platform of that digest with the pinned luxaudit, reading this repo's
+#      .luxaudit.toml ($(CURDIR), not the caller's $(PWD) under `make -C`);
+#   5. point $(1):$(VERSION) at the scanned digest (imagetools copies across registries, same digest).
+# $(1) destination image (no tag)   $(2) extra buildx cache flags
+RESUME_HINT := make release-hub and/or make release-ghcr for each registry still missing it, then make docker-tag-latest-local
 define publish_version
-	@if [ -n "$$(git status --porcelain 2>/dev/null)" ]; then \
-	  echo "REFUSING: the working tree is dirty, so $(1):$(VERSION) would not describe commit $(BUILD_COMMIT):"; \
-	  git status --short | sed 's/^/    /'; exit 1; \
+	@# The two refusals below also run INSIDE the gated shell further down, which is what holds under
+	@# `make -i`; these lines are the same checks in the shape repo.deploy_tag_is_immutable reads.
+	@if [ -n "$$(git status --porcelain)" ]; then \
+	  echo "REFUSING: the working tree is dirty"; exit 1; \
 	fi
 	@if docker manifest inspect $(1):$(VERSION) >/dev/null 2>&1; then \
-	  echo "REFUSING: $(1):$(VERSION) is already RELEASED. A released version is immutable; bump VERSION."; exit 1; \
+	  echo "REFUSING: $(1):$(VERSION) is already RELEASED. A released version is immutable; bump VERSION."; \
+	  echo "If a multi-registry release stopped partway, publish only what is missing: $(RESUME_HINT)"; exit 1; \
 	fi
-	@out=$$(docker manifest inspect $(1):$(VERSION) 2>&1) || case "$$out" in \
-	  *[Nn]"o such manifest"*|*"manifest unknown"*|*"not found"*) ;; \
-	  *) echo "REFUSING: cannot verify $(1):$(VERSION) is unreleased: $$out"; exit 1 ;; \
-	esac
+	@set -e; cand='$(LOCAL_IMAGE):candidate-$(BUILD_COMMIT)'; \
+	st=$$(git -c safe.directory='$(CURDIR)' -C '$(CURDIR)' status --porcelain) || { \
+	  echo "REFUSING: git status failed, so a clean tree cannot be proven"; exit 1; }; \
+	if [ -n "$$st" ]; then \
+	  echo "REFUSING: the working tree is dirty, so $(1):$(VERSION) would not describe commit $(BUILD_COMMIT):"; \
+	  echo "$$st" | sed 's/^/    /'; exit 1; \
+	fi; \
+	if out=$$(docker manifest inspect '$(1):$(VERSION)' 2>&1); then \
+	  echo "REFUSING: $(1):$(VERSION) is already RELEASED. A released version is immutable; bump VERSION."; exit 1; \
+	fi; \
+	case "$$out" in *[Nn]"o such manifest"*|*"manifest unknown"*|*"not found"*) ;; \
+	  *) echo "REFUSING: cannot verify $(1):$(VERSION) is unreleased: $$out"; exit 1 ;; esac; \
 	DOCKER_BUILDKIT=$(DOCKER_BUILDKIT) docker buildx build \
-		--platform $(PLATFORM) \
-		$(2) \
-		--build-arg BUILD_VERSION=$(VERSION) \
-		--build-arg BUILD_TIMESTAMP="$(BUILD_DATE)" \
-		--build-arg BUILD_COMMIT="$(BUILD_COMMIT)" \
-		--label "org.opencontainers.image.created=$(BUILD_DATE)" \
-		--label "org.opencontainers.image.version=$(VERSION)" \
-		--label "org.opencontainers.image.revision=$(BUILD_COMMIT)" \
-		--label "org.opencontainers.image.title=LuxMark" \
-		--label "org.opencontainers.image.description=A premium browser-based markdown editor with live preview" \
-		--label "org.opencontainers.image.url=https://github.com/luxardolabs/luxmark" \
-		--label "org.opencontainers.image.source=https://github.com/luxardolabs/luxmark" \
-		--label "org.opencontainers.image.authors=luxardolabs" \
-		-t $(1):candidate-$(BUILD_COMMIT) \
-		--push \
-		.
-	@set -e; T=$$(mktemp); trap 'rm -f "$$T"' EXIT INT TERM; \
-	docker pull -q $(1):candidate-$(BUILD_COMMIT) >/dev/null; \
-	docker save $(1):candidate-$(BUILD_COMMIT) -o "$$T"; chmod 644 "$$T"; \
-	docker run --rm -v $(PWD):/repo -v luxaudit-cache:/root/.cache/trivy -v "$$T":/candidate.tar:ro \
-	  $(LUXAUDIT_IMAGE) --image-archive /candidate.tar --image-label $(1):candidate-$(BUILD_COMMIT)
-	docker buildx imagetools create -t $(1):$(VERSION) $(1):candidate-$(BUILD_COMMIT)
-	@echo '$(GREEN)Pushed $(1):$(VERSION) (scanned candidate-$(BUILD_COMMIT))$(NC)'
+	  --platform $(PLATFORM) \
+	  $(2) \
+	  --build-arg BUILD_VERSION=$(VERSION) \
+	  --build-arg BUILD_TIMESTAMP="$(BUILD_DATE)" \
+	  --build-arg BUILD_COMMIT="$(BUILD_COMMIT)" \
+	  --label "org.opencontainers.image.created=$(BUILD_DATE)" \
+	  --label "org.opencontainers.image.version=$(VERSION)" \
+	  --label "org.opencontainers.image.revision=$(BUILD_COMMIT)" \
+	  --label "org.opencontainers.image.title=LuxMark" \
+	  --label "org.opencontainers.image.description=A premium browser-based markdown editor with live preview" \
+	  --label "org.opencontainers.image.url=https://github.com/luxardolabs/luxmark" \
+	  --label "org.opencontainers.image.source=https://github.com/luxardolabs/luxmark" \
+	  --label "org.opencontainers.image.authors=luxardolabs" \
+	  -t "$$cand" --push '$(CURDIR)'; \
+	digest=$$(docker buildx imagetools inspect "$$cand" --format '{{json .Manifest}}' \
+	  | grep -o '"digest":"sha256:[0-9a-f]*"' | head -1 | cut -d'"' -f4); \
+	[ -n "$$digest" ] || { echo "REFUSING: cannot read the digest of $$cand"; exit 1; }; \
+	T=$$(mktemp); trap 'rm -f "$$T"' EXIT INT TERM; \
+	for p in $$(echo '$(PLATFORM)' | tr ',' ' '); do \
+	  scan="$(PROJECT_NAME)-scan:$$(echo $$p | tr '/' '-')"; \
+	  docker pull -q --platform "$$p" "$$cand@$$digest" >/dev/null; \
+	  docker tag "$$cand@$$digest" "$$scan"; \
+	  docker save "$$scan" -o "$$T"; chmod 644 "$$T"; \
+	  [ -s "$$T" ] || { echo "REFUSING: docker save wrote an empty archive for $$p"; exit 1; }; \
+	  docker run --rm -v '$(CURDIR)':/repo -v luxaudit-cache:/root/.cache/trivy -v "$$T":/candidate.tar:ro \
+	    $(LUXAUDIT_IMAGE) --image-archive /candidate.tar --image-label "$$cand@$$digest ($$p)"; \
+	  docker rmi -f "$$scan" >/dev/null 2>&1 || true; \
+	done; \
+	docker buildx imagetools create -t '$(1):$(VERSION)' "$$cand@$$digest"; \
+	printf '$(GREEN)Pushed %s = %s (scanned: %s)$(NC)\n' '$(1):$(VERSION)' "$$cand@$$digest" '$(PLATFORM)'
 endef
 
 .PHONY: docker-push-local
