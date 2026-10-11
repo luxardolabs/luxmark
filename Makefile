@@ -47,10 +47,9 @@ comma := ,
 
 # Docker registry settings
 LOCAL_REGISTRY ?= $(LUX_REGISTRY)
-DOCKER_HUB_USER := luxardolabs
+IMAGE_ORG := luxardolabs
 GITHUB_USER := luxardolabs
-LOCAL_IMAGE := $(LOCAL_REGISTRY)/$(DOCKER_HUB_USER)/$(PROJECT_NAME)
-DOCKER_HUB_IMAGE := $(DOCKER_HUB_USER)/$(PROJECT_NAME)
+LOCAL_IMAGE := $(LOCAL_REGISTRY)/$(IMAGE_ORG)/$(PROJECT_NAME)
 GHCR_IMAGE := ghcr.io/$(GITHUB_USER)/$(PROJECT_NAME)
 
 # GHCR / registry auth rides on the HOST's stored docker login
@@ -78,7 +77,6 @@ help: ## Show this help message
 	@echo '  Directory: $(CURRENT_DIR)'
 	@echo '  Version: $(VERSION)'
 	@echo '  Local Registry: $(LOCAL_IMAGE):$(VERSION)'
-	@echo '  Docker Hub: $(DOCKER_HUB_IMAGE):$(VERSION)'
 	@echo '  GHCR: $(GHCR_IMAGE):$(VERSION)'
 	@echo ''
 	@echo '$(BLUE)Available targets:$(NC)'
@@ -114,16 +112,6 @@ buildx-setup:
 	  echo "Remove them:  docker buildx rm $$strays"; \
 	  exit 1; \
 	fi
-
-.PHONY: docker-login-hub
-docker-login-hub: ## Login to Docker Hub (uses DOCKER_HUB_TOKEN env var or prompts)
-	@echo '$(BLUE)Logging in to Docker Hub...$(NC)'
-	@if [ -n "$$DOCKER_HUB_TOKEN" ]; then \
-		echo "$$DOCKER_HUB_TOKEN" | docker login -u $(DOCKER_HUB_USER) --password-stdin; \
-	else \
-		docker login -u $(DOCKER_HUB_USER); \
-	fi
-	@echo '$(GREEN)Docker Hub login successful!$(NC)'
 
 .PHONY: docker-login-ghcr
 docker-login-ghcr: ## Login to GHCR on this host (one-time; uses GHCR_TOKEN env var or prompts)
@@ -173,7 +161,7 @@ build-local: ## Build for local architecture only (quick, no buildx)
 		.
 	@echo '$(GREEN)Build complete!$(NC)'
 
-# Publishing $(1):$(VERSION), the same way to every registry (FLEET-RELEASE-PROCESS). The gate runs in ONE
+# Publishing $(1):$(VERSION), the same way to every registry (local, GHCR) (FLEET-RELEASE-PROCESS). The gate runs in ONE
 # shell with `set -e`, so no step can be skipped past (`make -i`, `.IGNORE`) and every failure stops it:
 #   1. refuse a tree that is dirty, or whose status git cannot read (another uid's checkout: a failed
 #      `git status` prints nothing, which must never read as clean);
@@ -187,7 +175,7 @@ build-local: ## Build for local architecture only (quick, no buildx)
 #      the pinned luxaudit reading this repo's .luxaudit.toml ($(CURDIR), not the caller's $(PWD));
 #   5. point $(1):$(VERSION) at the scanned digest (imagetools copies across registries, same digest).
 # $(1) destination image (no tag)   $(2) extra buildx cache flags
-RESUME_HINT := make release-hub and/or make release-ghcr for each registry still missing it, then make docker-tag-latest-local
+RESUME_HINT := make release-ghcr if GHCR is still missing it, then make docker-tag-latest-local
 define publish_version
 	@# The two refusals below also run INSIDE the gated shell further down, which is what holds under
 	@# `make -i`; these lines are the same checks in the shape repo.deploy_tag_is_immutable reads.
@@ -249,17 +237,12 @@ endef
 docker-push-local: validate-version require-registry buildx-setup docker-pull-cache ## Build, scan and push to local registry (multi-arch: amd64 + arm64)
 	$(call publish_version,$(LOCAL_IMAGE),--build-arg BUILDKIT_INLINE_CACHE=1 --cache-from $(LOCAL_IMAGE):latest)
 
-.PHONY: docker-push-hub
-docker-push-hub: validate-version require-registry buildx-setup docker-login-hub ## Build, scan and push to Docker Hub (multi-arch: amd64 + arm64)
-	@docker pull $(DOCKER_HUB_IMAGE):latest 2>/dev/null || echo "No previous image found for cache"
-	$(call publish_version,$(DOCKER_HUB_IMAGE),--build-arg BUILDKIT_INLINE_CACHE=1 --cache-from $(DOCKER_HUB_IMAGE):latest)
-
 .PHONY: docker-push-ghcr
 docker-push-ghcr: validate-version require-registry buildx-setup ## Build, scan and push to GHCR (multi-arch: amd64 + arm64; uses host docker login)
 	$(call publish_version,$(GHCR_IMAGE),--cache-from type=registry$(comma)ref=$(GHCR_IMAGE):cache --cache-to type=registry$(comma)ref=$(GHCR_IMAGE):cache$(comma)mode=max)
 
 .PHONY: docker-push-all
-docker-push-all: docker-push-local docker-push-hub docker-push-ghcr ## Push to all registries (local, Docker Hub, GHCR)
+docker-push-all: docker-push-local docker-push-ghcr ## Push to all registries (local, GHCR)
 
 .PHONY: docker-tag-latest-local
 docker-tag-latest-local: require-registry ## Point local :latest at the EXISTING :$(VERSION) manifest
@@ -270,15 +253,6 @@ docker-tag-latest-local: require-registry ## Point local :latest at the EXISTING
 	@echo '$(BLUE)Pointing local :latest at $(VERSION)...$(NC)'
 	docker buildx imagetools create -t $(LOCAL_IMAGE):latest $(LOCAL_IMAGE):$(VERSION)
 	@echo '$(GREEN)local :latest -> $(VERSION)$(NC)'
-
-.PHONY: docker-tag-latest-hub
-docker-tag-latest-hub: docker-login-hub ## Point Docker Hub :latest at the EXISTING :$(VERSION) manifest
-	@# Retag, don't rebuild — see docker-tag-latest-ghcr for why (a rebuild produced a second image
-	@# with revision=unknown). NOTE: luxardolabs/luxmark does not exist on Docker Hub; nothing has
-	@# ever been published there. These targets are unused, not policy.
-	@echo '$(BLUE)Pointing Docker Hub :latest at $(VERSION)...$(NC)'
-	docker buildx imagetools create -t $(DOCKER_HUB_IMAGE):latest $(DOCKER_HUB_IMAGE):$(VERSION)
-	@echo '$(GREEN)Docker Hub :latest -> $(VERSION)$(NC)'
 
 .PHONY: docker-tag-latest-ghcr
 docker-tag-latest-ghcr: ## Point GHCR :latest at the EXISTING :$(VERSION) manifest (no rebuild)
@@ -293,21 +267,7 @@ docker-tag-latest-ghcr: ## Point GHCR :latest at the EXISTING :$(VERSION) manife
 	@echo '$(GREEN)GHCR :latest -> $(VERSION)$(NC)'
 
 .PHONY: docker-tag-latest
-docker-tag-latest: docker-tag-latest-local docker-tag-latest-hub docker-tag-latest-ghcr ## Tag as latest in all registries
-
-.PHONY: release-hub
-release-hub: docker-push-hub docker-tag-latest-hub ## Release to Docker Hub only: version + latest (multi-arch)
-	@echo ''
-	@echo '$(GREEN)========================================$(NC)'
-	@echo '$(GREEN)Docker Hub Release $(VERSION) complete!$(NC)'
-	@echo '$(GREEN)========================================$(NC)'
-	@echo ''
-	@echo '$(BLUE)Images published (amd64 + arm64):$(NC)'
-	@echo '  $(DOCKER_HUB_IMAGE):$(VERSION)'
-	@echo '  $(DOCKER_HUB_IMAGE):latest'
-	@echo ''
-	@echo '$(BLUE)Pull command:$(NC)'
-	@echo '  docker pull $(DOCKER_HUB_IMAGE):latest'
+docker-tag-latest: docker-tag-latest-local docker-tag-latest-ghcr ## Tag as latest in all registries
 
 .PHONY: release-ghcr
 release-ghcr: docker-push-ghcr docker-tag-latest-ghcr ## Release to GHCR only: version + latest (multi-arch)
@@ -336,16 +296,11 @@ release: docker-push-all docker-tag-latest ## Full release: version + latest to 
 	@echo '    $(LOCAL_IMAGE):$(VERSION)'
 	@echo '    $(LOCAL_IMAGE):latest'
 	@echo ''
-	@echo '  $(YELLOW)Docker Hub:$(NC)'
-	@echo '    $(DOCKER_HUB_IMAGE):$(VERSION)'
-	@echo '    $(DOCKER_HUB_IMAGE):latest'
-	@echo ''
 	@echo '  $(YELLOW)GHCR:$(NC)'
 	@echo '    $(GHCR_IMAGE):$(VERSION)'
 	@echo '    $(GHCR_IMAGE):latest'
 	@echo ''
 	@echo '$(BLUE)Pull commands:$(NC)'
-	@echo '  docker pull $(DOCKER_HUB_IMAGE):latest'
 	@echo '  docker pull $(GHCR_IMAGE):latest'
 
 .PHONY: test
@@ -465,7 +420,6 @@ info: validate-version ## Show project information
 	@echo ''
 	@echo '$(BLUE)Registry Information:$(NC)'
 	@echo '  Local: $(LOCAL_IMAGE)'
-	@echo '  Docker Hub: $(DOCKER_HUB_IMAGE)'
 	@echo '  GHCR: $(GHCR_IMAGE)'
 
 # Development helpers

@@ -1,4 +1,4 @@
-// Locks the release gate in the Makefile's `publish_version` (docker-push-local / -hub / -ghcr).
+// Locks the release gate in the Makefile's `publish_version` (docker-push-local / -ghcr).
 //
 // A release tag is immutable: prod pins it. So :$(VERSION) may only be pointed at the DIGEST of a
 // candidate this run built from a provably clean tree, pushed to the private registry, and scanned
@@ -81,7 +81,6 @@ function publish(target, { manifest = 'notfound', revision = '', scan = 'pass', 
 
 const TARGETS = {
   'docker-push-local': PRIVATE,
-  'docker-push-hub': 'luxardolabs/luxmark',
   'docker-push-ghcr': 'ghcr.io/luxardolabs/luxmark',
 };
 const promotions = (calls) => calls.filter((c) => c.startsWith('docker buildx imagetools create'));
@@ -151,7 +150,7 @@ test('a VERSION already released from another commit is refused before anything 
 test('a refused re-release names the per-registry targets that resume an interrupted release', () => {
   const r = publish('docker-push-ghcr', { manifest: 'exists', revision: (sb) => sb.commit });
   assert.notEqual(r.status, 0);
-  assert.match(r.out, /make release-hub and\/or make release-ghcr/);
+  assert.match(r.out, /make release-ghcr if GHCR is still missing it/);
   assert.equal(builds(r.calls).length, 0, r.trace);
   assert.equal(promotions(r.calls).length, 0, r.trace);
 });
