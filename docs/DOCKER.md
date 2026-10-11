@@ -5,10 +5,12 @@ This guide covers building, running, and deploying LuxMark with Docker.
 ## Quick Start
 
 ```bash
-# Build and run with Docker Compose
+# Run a published release with Docker Compose (compose pulls; it never builds)
+cp .env.example .env             # set TAG to the release you want, e.g. TAG=2026.10.0
+docker network create luxardolabs 2>/dev/null || true   # compose.yml joins this external network
 docker compose up -d
 
-# Or build and run manually
+# Or build and run from source
 docker build -t luxmark .
 docker run -d -p 8080:8080 --name luxmark luxmark
 ```
@@ -20,7 +22,7 @@ Access LuxMark at `http://localhost:8080`
 ### Development
 
 ```bash
-docker compose up -d
+docker compose up -d     # needs TAG in .env (compose.yml uses ${TAG:?})
 docker compose logs -f
 docker compose down
 ```
@@ -107,7 +109,7 @@ ports:
 ### View Logs
 
 ```bash
-docker logs luxmark
+docker logs luxmark-web
 docker compose logs -f
 ```
 
@@ -127,11 +129,11 @@ docker build --no-cache -t luxmark .
 ## Updating
 
 ```bash
-# Pull latest changes
-git pull
-
-# Rebuild and restart
-docker compose down
-docker compose build --no-cache
-docker compose up -d
+# Move to a new release: set TAG in .env, then pull and recreate
+sed -i 's/^TAG=.*/TAG=2026.10.0/' .env
+docker compose pull
+docker compose up -d --wait
+curl -s http://localhost:8080/version.json   # should report the new version
 ```
+
+Maintainers deploy the hosted site with `make prod-deploy` after `make release-ghcr` (see the Makefile's Production section).
