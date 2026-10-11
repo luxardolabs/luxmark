@@ -36,7 +36,7 @@ case "$1 $2" in
     esac ;;
   "buildx imagetools")
     case "$*" in
-      *inspect*Image*) echo '{"linux/amd64":{"config":{"Labels":{"org.opencontainers.image.revision":"'"$REVISION"'"}}},"linux/arm64":{"config":{"Labels":{"org.opencontainers.image.revision":"'"$REVISION"'"}}}}' ;;
+      *inspect*Image*) printf '{\\n  "linux/amd64": {\\n    "config": {\\n      "Labels": {\\n        "org.opencontainers.image.revision": "%s"\\n      }\\n    }\\n  },\\n  "linux/arm64": {\\n    "config": {\\n      "Labels": {\\n        "org.opencontainers.image.revision": "%s"\\n      }\\n    }\\n  }\\n}\\n' "$REVISION" "$REVISION" ;;
       *inspect*Manifest.Digest*) echo '"${DIGEST}"' ;;
       *inspect*--raw*) printf '{\\n  "manifests": [\\n    {"digest": "${AMD64}", "platform": {"os": "linux", "architecture": "amd64"}},\\n    {"digest": "${ARM64}", "platform": {"os": "linux", "architecture": "arm64"}},\\n    {"digest": "sha256:${'ee'.repeat(32)}", "platform": {"os": "unknown", "architecture": "unknown"}}\\n  ]\\n}\\n' | { [ "$PLATS" = amd64only ] && grep -v arm64 || cat; } ;;
       *inspect*Manifest*) printf '{\\n  "schemaVersion": 2,\\n  "mediaType": "application/vnd.oci.image.index.v1+json",\\n  "digest": "${DIGEST}",\\n  "size": 1609,\\n  "manifests": [\\n    {\\n      "digest": "sha256:${'cd'.repeat(32)}"\\n    }\\n  ]\\n}\\n' ;;
@@ -56,6 +56,11 @@ function sandbox() {
   writeFileSync(join(dir, 'VERSION'), `${VERSION}\n`);
   writeFileSync(join(parent, 'docker'), FAKE_DOCKER);
   chmodSync(join(parent, 'docker'), 0o755);
+  // gh: `release view` says none exists, `release create` succeeds; git ls-remote finds the tag.
+  writeFileSync(join(parent, 'gh'), '#!/bin/sh\necho "gh $*" >> "$DOCKER_LOG"\ncase "$1 $2" in "release view") exit 1;; esac\nexit 0\n');
+  chmodSync(join(parent, 'gh'), 0o755);
+  mkdirSync(join(dir, 'src', 'release_notes'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'release_notes', `${VERSION}.md`), `# ${VERSION}\n`);
   const git = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: dir });
   git('init', '-q');
   git('add', '-A');
@@ -160,6 +165,30 @@ test('an unreachable registry fails closed (never reads as unreleased)', () => {
   assert.notEqual(r.status, 0);
   assert.match(r.out, /cannot verify/);
   assert.equal(builds(r.calls).length, 0, r.trace);
+});
+
+test('the GHCR candidate build never writes cache layers to the public registry before its scan', () => {
+  const r = publish('docker-push-ghcr', { scan: 'fail' });
+  const build = builds(r.calls);
+  assert.equal(build.length, 1, r.trace);
+  assert.doesNotMatch(build[0], /ref=ghcr\.io/, `cache refs must stay in the private registry:\n${build[0]}`);
+});
+
+test('make release builds the image ONCE and publishes the scanned digest (GHCR is the release)', () => {
+  const r = publish('release', { setup: (s) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'tag', '-a', `v${VERSION}`, '-m', 'v'], { cwd: s.dir }) });
+  assert.equal(builds(r.calls).length, 1, r.trace);
+  assert.ok(promotions(r.calls).some((c) => c.includes(`-t ghcr.io/luxardolabs/luxmark:${VERSION} `)), r.trace);
+});
+
+test(':latest only moves to a VERSION built from this commit (make -i cannot roll it back)', () => {
+  const r = publish('release-ghcr', { manifest: 'exists', revision: 'f00f00f', args: ['-i'] });
+  assert.equal(promotions(r.calls).filter((c) => c.includes(':latest')).length, 0, r.trace);
+});
+
+test(':latest moves when VERSION carries this commit\'s revision', () => {
+  const r = publish('docker-tag-latest-ghcr', { manifest: 'exists', revision: (sb) => sb.commit });
+  assert.equal(r.status, 0, r.out);
+  assert.ok(promotions(r.calls).some((c) => c === `docker buildx imagetools create -t ghcr.io/luxardolabs/luxmark:latest ghcr.io/luxardolabs/luxmark:${VERSION}`), r.trace);
 });
 
 test('a dirty working tree is refused before anything is built', () => {

@@ -92,10 +92,11 @@ The Docker image includes:
 
 ### Change Port
 
-```yaml
-# compose.yml
-ports:
-  - "3000:8080"  # Maps to port 3000 on host
+Set `PORT` (and `LUXMARK_BIND`) in `.env`; compose.yml reads both:
+
+```bash
+PORT=3000             # host port
+LUXMARK_BIND=0.0.0.0  # default 127.0.0.1 (loopback); 0.0.0.0 serves the page to your LAN directly
 ```
 
 ## Image Size

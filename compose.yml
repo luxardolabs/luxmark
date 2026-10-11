@@ -13,7 +13,9 @@ services:
     container_name: luxmark-web
     restart: unless-stopped
     ports:
-      - "${PORT:-8080}:8080"
+      # Loopback by default: the edge reaches the container over the docker network, so a 0.0.0.0
+      # publish only let the LAN bypass it. Self-hosting on a LAN: set LUXMARK_BIND=0.0.0.0 in .env.
+      - "${LUXMARK_BIND:-127.0.0.1}:${PORT:-8080}:8080"
     environment:
       - NGINX_WORKER_PROCESSES=auto
       - NGINX_WORKER_CONNECTIONS=1024

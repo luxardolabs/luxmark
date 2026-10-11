@@ -238,11 +238,23 @@ docker-push-local: validate-version require-registry buildx-setup docker-pull-ca
 	$(call publish_version,$(LOCAL_IMAGE),--build-arg BUILDKIT_INLINE_CACHE=1 --cache-from $(LOCAL_IMAGE):latest)
 
 .PHONY: docker-push-ghcr
+# Build cache lives in the PRIVATE registry: --cache-to runs during the build, before the scan, so a GHCR
+# cache would publish every layer of a candidate the scan then rejects.
 docker-push-ghcr: validate-version require-registry buildx-setup ## Build, scan and push to GHCR (multi-arch: amd64 + arm64; uses host docker login)
-	$(call publish_version,$(GHCR_IMAGE),--cache-from type=registry$(comma)ref=$(GHCR_IMAGE):cache --cache-to type=registry$(comma)ref=$(GHCR_IMAGE):cache$(comma)mode=max)
+	$(call publish_version,$(GHCR_IMAGE),--cache-from type=registry$(comma)ref=$(LOCAL_IMAGE):cache --cache-to type=registry$(comma)ref=$(LOCAL_IMAGE):cache$(comma)mode=max)
 
-.PHONY: docker-push-all
-docker-push-all: docker-push-local docker-push-ghcr ## Push to all registries (local, GHCR)
+# Point $(1):latest at the EXISTING $(1):$(VERSION) manifest, only when that VERSION was built from THIS
+# commit (its revision label). One shell: under `make -i` a refused publish would otherwise fall through
+# and move :latest back to an older release.
+define promote_latest
+	@set -e; revs=$$(docker buildx imagetools inspect $(1):$(VERSION) --format '{{json .Image}}' \
+	  | grep -o '"org.opencontainers.image.revision": *"[^"]*"' | sed 's/.*"\([^"]*\)"$$/\1/' | sort -u); \
+	if [ "$$revs" != "$(BUILD_COMMIT)" ]; then \
+	  echo '$(RED)REFUSING: $(1):$(VERSION) was built from "'"$$revs"'", not this commit ($(BUILD_COMMIT)); :latest stays where it is$(NC)'; exit 1; \
+	fi; \
+	docker buildx imagetools create -t $(1):latest $(1):$(VERSION); \
+	echo '$(GREEN)$(1):latest -> $(VERSION)$(NC)'
+endef
 
 .PHONY: docker-tag-latest-local
 docker-tag-latest-local: require-registry ## Point local :latest at the EXISTING :$(VERSION) manifest
@@ -250,9 +262,7 @@ docker-tag-latest-local: require-registry ## Point local :latest at the EXISTING
 	@# silently lost linux/arm64 while :$(VERSION) kept it — an arm64 host pulling :latest would fail
 	@# or get an emulated amd64 image, with nothing saying so. imagetools points the tag at the same
 	@# multi-arch manifest.
-	@echo '$(BLUE)Pointing local :latest at $(VERSION)...$(NC)'
-	docker buildx imagetools create -t $(LOCAL_IMAGE):latest $(LOCAL_IMAGE):$(VERSION)
-	@echo '$(GREEN)local :latest -> $(VERSION)$(NC)'
+	$(call promote_latest,$(LOCAL_IMAGE))
 
 .PHONY: docker-tag-latest-ghcr
 docker-tag-latest-ghcr: ## Point GHCR :latest at the EXISTING :$(VERSION) manifest (no rebuild)
@@ -262,12 +272,7 @@ docker-tag-latest-ghcr: ## Point GHCR :latest at the EXISTING :$(VERSION) manife
 	@# real commit. Two images, same content, one with false provenance, and nothing would have said so.
 	@# `imagetools create` points a new tag at the SAME multi-arch manifest, so the two tags are the
 	@# identical digest by construction.
-	@echo '$(BLUE)Pointing GHCR :latest at $(VERSION)...$(NC)'
-	docker buildx imagetools create -t $(GHCR_IMAGE):latest $(GHCR_IMAGE):$(VERSION)
-	@echo '$(GREEN)GHCR :latest -> $(VERSION)$(NC)'
-
-.PHONY: docker-tag-latest
-docker-tag-latest: docker-tag-latest-local docker-tag-latest-ghcr ## Tag as latest in all registries
+	$(call promote_latest,$(GHCR_IMAGE))
 
 .PHONY: release-ghcr
 release-ghcr: docker-push-ghcr docker-tag-latest-ghcr ## Release to GHCR only: version + latest (multi-arch)
@@ -284,24 +289,8 @@ release-ghcr: docker-push-ghcr docker-tag-latest-ghcr ## Release to GHCR only: v
 	@echo '  docker pull $(GHCR_IMAGE):latest'
 
 .PHONY: release
-release: docker-push-all docker-tag-latest ## Full release: version + latest to all registries (multi-arch)
-	@echo ''
-	@echo '$(GREEN)========================================$(NC)'
-	@echo '$(GREEN)Release $(VERSION) complete!$(NC)'
-	@echo '$(GREEN)========================================$(NC)'
-	@echo ''
-	@echo '$(BLUE)Images published (amd64 + arm64):$(NC)'
-	@echo ''
-	@echo '  $(YELLOW)Local Registry:$(NC)'
-	@echo '    $(LOCAL_IMAGE):$(VERSION)'
-	@echo '    $(LOCAL_IMAGE):latest'
-	@echo ''
-	@echo '  $(YELLOW)GHCR:$(NC)'
-	@echo '    $(GHCR_IMAGE):$(VERSION)'
-	@echo '    $(GHCR_IMAGE):latest'
-	@echo ''
-	@echo '$(BLUE)Pull commands:$(NC)'
-	@echo '  docker pull $(GHCR_IMAGE):latest'
+release: release-ghcr ## THE release: build once, scan every platform, promote to GHCR (:VERSION + :latest), then the GitHub Release
+	@$(MAKE) --no-print-directory gh-release
 
 .PHONY: test
 test: ## Run the test suite (node:test, in docker — no npm install, no build step)
@@ -354,7 +343,7 @@ deploy-local: ## Deploy to local environment
 # The node topology lives in the gitignored Makefile.local (this repo is public). After a release:
 #   make release-ghcr   # build + scan every platform + promote :$(VERSION) (and :latest) on GHCR
 #   make gh-release     # the GitHub Release
-#   make prod-deploy    # sync compose.yml, pin .env to :$(VERSION), pull + recreate, verify the live site
+#   make prod-deploy    # refuse an unpublished :$(VERSION), sync compose.yml (checksummed), pin TAG, recreate, verify live
 # Roll back by deploying an older released version: make prod-deploy MANUAL_VERSION=<x.y.z>
 # =============================================================================
 PROD_URL     ?= https://luxmark.luxardolabs.com
@@ -374,22 +363,34 @@ require-prod: ## Fail with the remedy when the prod node topology (Makefile.loca
 	fi
 
 prod-sync: require-prod ## Push compose.yml to the node (the repo is the source of truth)
-	@# A hand-placed compose.yaml predates the synced compose.yml: kept beside it, renamed, never deleted.
-	@printf '%s\n' 'set -e; mkdir -p $(PROD_DIR); cd $(PROD_DIR)' \
-	  "echo $$(base64 -w0 compose.yml) | base64 -d > compose.yml.new && mv compose.yml.new compose.yml" \
-	  'if [ -f compose.yaml ]; then mv compose.yaml compose.yaml.pre-compose-yml; echo "renamed the old compose.yaml to compose.yaml.pre-compose-yml"; fi' \
-	  'sha256sum compose.yml' | $(PROD_SH)
-	@echo "local: $$(sha256sum compose.yml)"
-	@echo '$(GREEN)synced compose.yml to $(PROD_NODE):$(PROD_DIR)$(NC)'
+	@# One command per script line, so `set -e` stops on any failure: in an `a && b` list it does not.
+	@# The payload is checksummed against the local file BEFORE it replaces anything, and a stray
+	@# compose.yaml is moved to a timestamped name (`mv -n`), so no earlier copy is ever overwritten.
+	@set -e; b64=$$(base64 < compose.yml | tr -d '\n'); sum=$$(sha256sum compose.yml | cut -d' ' -f1); \
+	[ -n "$$b64" ] && [ -n "$$sum" ] || { echo '$(RED)REFUSING: could not encode compose.yml locally$(NC)'; exit 1; }; \
+	printf '%s\n' 'set -e' 'mkdir -p $(PROD_DIR)' 'cd $(PROD_DIR)' \
+	  "echo $$b64 | base64 -d > compose.yml.new" \
+	  "echo '$$sum  compose.yml.new' | sha256sum -c --quiet -" \
+	  'mv compose.yml.new compose.yml' \
+	  'if [ -f compose.yaml ]; then b=compose.yaml.pre-compose-yml.$$(date +%Y%m%d%H%M%S); mv -n compose.yaml "$$b"; [ ! -e compose.yaml ]; echo "moved the old compose.yaml to $$b"; fi' \
+	  | $(PROD_SH)
+	@echo '$(GREEN)synced compose.yml to $(PROD_NODE):$(PROD_DIR) (checksum verified)$(NC)'
 
-prod-deploy: require-prod prod-sync ## Pin the node to :$(VERSION), pull, recreate, wait healthy, verify the live site
+prod-deploy: require-prod ## Pin the node to :$(VERSION), pull, recreate, wait healthy, verify the live site
+	@# The published check runs BEFORE prod-sync, so a refused deploy changes nothing on the node.
 	@out=$$(docker manifest inspect $(GHCR_IMAGE):$(VERSION) 2>&1) || { \
 	  echo '$(RED)REFUSING: $(GHCR_IMAGE):$(VERSION) is not published (run the release first): '"$$out"'$(NC)'; exit 1; }
+	@$(MAKE) --no-print-directory prod-sync
 	@echo '$(BLUE)Deploying $(GHCR_IMAGE):$(VERSION) to $(PROD_NODE):$(PROD_DIR)...$(NC)'
-	@printf '%s\n' 'set -e; cd $(PROD_DIR)' 'printf "TAG=%s\n" "$(VERSION)" > .env' \
+	@# Only the TAG line of the node's .env is rewritten; PORT, LUXMARK_IMAGE and the rest are kept.
+	@printf '%s\n' 'set -e' 'cd $(PROD_DIR)' 'touch .env' \
+	  'grep -v "^TAG=" .env > .env.new || true' \
+	  'printf "TAG=%s\n" "$(VERSION)" >> .env.new' \
+	  'mv .env.new .env' \
 	  '$(PROD_COMPOSE) pull' '$(PROD_COMPOSE) up -d --wait --wait-timeout $(PROD_WAIT)' \
 	  'docker inspect -f "{{.Name}} {{.State.Health.Status}} {{.Config.Image}}" luxmark-web' | $(PROD_SH)
-	@got=$$(curl -fsS --max-time 10 $(PROD_URL)/version.json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["version"], d["commit"])'); \
+	@# Only `version` is compared: older releases (1.0.5) nest the commit under git.commit.
+	@got=$$(curl -fsS --max-time 10 $(PROD_URL)/version.json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("version", "?"), d.get("commit") or d.get("git", {}).get("commit", "?"))'); \
 	case "$$got" in "$(VERSION) "*) echo '$(GREEN)live: $(PROD_URL) serves '"$$got"'$(NC)';; \
 	  *) echo '$(RED)DEPLOY NOT LIVE: $(PROD_URL)/version.json reports "'"$$got"'", expected $(VERSION)$(NC)'; exit 1;; esac
 

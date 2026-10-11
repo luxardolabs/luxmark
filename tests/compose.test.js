@@ -33,3 +33,11 @@ test('the container answers as `luxmark`, the name the edge proxy routes to', ()
   assert.match(compose, /^\s+container_name:\s*luxmark-web\s*$/m);
   assert.match(compose, /networks:\n\s+luxardolabs:\n\s+aliases:\n\s+- luxmark\s*$/m);
 });
+
+test('the host port binds to loopback by default, so nothing reaches nginx around the edge', () => {
+  // The edge proxies over the docker network; a 0.0.0.0 publish let anything on the node's LAN reach the
+  // container directly (no TLS, no edge headers). LUXMARK_BIND opts in to wider exposure for self-hosting.
+  const port = compose.match(/^\s+- "([^"]+:8080)"\s*$/m);
+  assert.ok(port, 'compose.yml publishes no 8080 port');
+  assert.match(port[1], /^\$\{LUXMARK_BIND:-127\.0\.0\.1\}:\$\{PORT:-8080\}:8080$/);
+});
