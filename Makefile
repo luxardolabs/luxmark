@@ -33,7 +33,7 @@ endif
 # PUBLIC, so no internal registry host is inlined here — the fleet gitleaks disclosure tier enforces
 # that, and a clean clone still builds/lints because every recipe references the var, not a value.
 LUX_REGISTRY     ?=
-LUXARCH_VERSION  := 0.278.1
+LUXARCH_VERSION  := 0.279.1
 LUXLINT_VERSION  := 0.63.1
 LUXAUDIT_VERSION := 0.13.2
 LUXARCH_IMAGE    := $(LUX_REGISTRY)/luxardolabs/luxarch:$(LUXARCH_VERSION)
