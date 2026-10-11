@@ -167,11 +167,14 @@ test('an unreachable registry fails closed (never reads as unreleased)', () => {
   assert.equal(builds(r.calls).length, 0, r.trace);
 });
 
-test('the GHCR candidate build never writes cache layers to the public registry before its scan', () => {
-  const r = publish('docker-push-ghcr', { scan: 'fail' });
-  const build = builds(r.calls);
-  assert.equal(build.length, 1, r.trace);
-  assert.doesNotMatch(build[0], /ref=ghcr\.io/, `cache refs must stay in the private registry:\n${build[0]}`);
+test('no candidate build reads or writes a registry cache', () => {
+  // A registry cache is written DURING the build, before the scan, and this image (nginx + ~450KB of
+  // static files) gains nothing from one. Owner decision 2026-10-10: no build cache.
+  for (const target of ['docker-push-local', 'docker-push-ghcr']) {
+    const build = builds(publish(target).calls);
+    assert.equal(build.length, 1);
+    assert.doesNotMatch(build[0], /--cache-(to|from)|BUILDKIT_INLINE_CACHE/, `${target}: ${build[0]}`);
+  }
 });
 
 test('make release builds the image ONCE and publishes the scanned digest (GHCR is the release)', () => {

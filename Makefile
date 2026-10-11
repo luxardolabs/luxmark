@@ -43,8 +43,6 @@ LUXAUDIT_IMAGE   := $(LUX_REGISTRY)/luxardolabs/luxaudit:$(LUXAUDIT_VERSION)
 LUXLINT          := $(LUXLINT_IMAGE)
 REGISTRY         := $(LUX_REGISTRY)
 
-comma := ,
-
 # Docker registry settings
 LOCAL_REGISTRY ?= $(LUX_REGISTRY)
 IMAGE_ORG := luxardolabs
@@ -123,18 +121,11 @@ docker-login-ghcr: ## Login to GHCR on this host (one-time; uses GHCR_TOKEN env 
 	fi
 	@echo '$(GREEN)GHCR login successful!$(NC)'
 
-.PHONY: docker-pull-cache
-docker-pull-cache: ## Pull previous image for cache
-	@echo '$(BLUE)Pulling previous image for cache...$(NC)'
-	@docker pull $(LOCAL_IMAGE):latest 2>/dev/null || echo "No previous image found for cache (this is normal for first builds)"
-
 .PHONY: docker-build-local
-docker-build-local: validate-version buildx-setup docker-pull-cache ## Build Docker image (local load, amd64 only for fast iteration)
+docker-build-local: validate-version buildx-setup ## Build Docker image (local load, amd64 only for fast iteration)
 	@echo '$(BLUE)Building Docker image for local use (amd64 only)...$(NC)'
 	DOCKER_BUILDKIT=$(DOCKER_BUILDKIT) docker buildx build \
 		--platform $(PLATFORM_DEV) \
-		--build-arg BUILDKIT_INLINE_CACHE=1 \
-		--cache-from $(LOCAL_IMAGE):latest \
 		--build-arg BUILD_VERSION=$(VERSION) \
 		--build-arg BUILD_TIMESTAMP="$(BUILD_DATE)" \
 		--build-arg BUILD_COMMIT="$(BUILD_COMMIT)" \
@@ -174,7 +165,8 @@ build-local: ## Build for local architecture only (quick, no buildx)
 #      index digest per platform fails: "cannot overwrite digest"), refusing a missing platform, with
 #      the pinned luxaudit reading this repo's .luxaudit.toml ($(CURDIR), not the caller's $(PWD));
 #   5. point $(1):$(VERSION) at the scanned digest (imagetools copies across registries, same digest).
-# $(1) destination image (no tag)   $(2) extra buildx cache flags
+# $(1) destination image (no tag). No registry build cache: a cache is written during the build, before
+# the scan, and this image (nginx + ~450KB of static files) builds in about a minute without one.
 RESUME_HINT := make release-ghcr if GHCR is still missing it, then make docker-tag-latest-local
 define publish_version
 	@# The two refusals below also run INSIDE the gated shell further down, which is what holds under
@@ -200,7 +192,6 @@ define publish_version
 	  *) echo "REFUSING: cannot verify $(1):$(VERSION) is unreleased: $$out"; exit 1 ;; esac; \
 	DOCKER_BUILDKIT=$(DOCKER_BUILDKIT) docker buildx build \
 	  --platform $(PLATFORM) \
-	  $(2) \
 	  --build-arg BUILD_VERSION=$(VERSION) \
 	  --build-arg BUILD_TIMESTAMP="$(BUILD_DATE)" \
 	  --build-arg BUILD_COMMIT="$(BUILD_COMMIT)" \
@@ -234,14 +225,12 @@ define publish_version
 endef
 
 .PHONY: docker-push-local
-docker-push-local: validate-version require-registry buildx-setup docker-pull-cache ## Build, scan and push to local registry (multi-arch: amd64 + arm64)
-	$(call publish_version,$(LOCAL_IMAGE),--build-arg BUILDKIT_INLINE_CACHE=1 --cache-from $(LOCAL_IMAGE):latest)
+docker-push-local: validate-version require-registry buildx-setup ## Build, scan and push to local registry (multi-arch: amd64 + arm64)
+	$(call publish_version,$(LOCAL_IMAGE))
 
 .PHONY: docker-push-ghcr
-# Build cache lives in the PRIVATE registry: --cache-to runs during the build, before the scan, so a GHCR
-# cache would publish every layer of a candidate the scan then rejects.
 docker-push-ghcr: validate-version require-registry buildx-setup ## Build, scan and push to GHCR (multi-arch: amd64 + arm64; uses host docker login)
-	$(call publish_version,$(GHCR_IMAGE),--cache-from type=registry$(comma)ref=$(LOCAL_IMAGE):cache --cache-to type=registry$(comma)ref=$(LOCAL_IMAGE):cache$(comma)mode=max)
+	$(call publish_version,$(GHCR_IMAGE))
 
 # Point $(1):latest at the EXISTING $(1):$(VERSION) manifest, only when that VERSION was built from THIS
 # commit (its revision label). One shell: under `make -i` a refused publish would otherwise fall through
