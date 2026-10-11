@@ -170,7 +170,7 @@ test('an unreachable registry fails closed (never reads as unreleased)', () => {
 test('no candidate build reads or writes a registry cache', () => {
   // A registry cache is written DURING the build, before the scan, and this image (nginx + ~450KB of
   // static files) gains nothing from one. Owner decision 2026-10-10: no build cache.
-  for (const target of ['docker-push-local', 'docker-push-ghcr']) {
+  for (const target of ['docker-push-local', 'docker-push-ghcr', 'docker-build-local']) {
     const build = builds(publish(target).calls);
     assert.equal(build.length, 1);
     assert.doesNotMatch(build[0], /--cache-(to|from)|BUILDKIT_INLINE_CACHE/, `${target}: ${build[0]}`);
