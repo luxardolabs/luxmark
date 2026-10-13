@@ -626,12 +626,12 @@
       },
       {
         "rule": "repo.stack_smoke_wired",
-        "status": "INERT",
+        "status": "PASS",
         "since": "0.268.0",
         "violations": 0,
         "deferred": false,
-        "inert": true,
-        "inert_reason": "no `dev-deploy` target in a committed makefile \u2014 no deploy to end with a probe",
+        "inert": false,
+        "inert_reason": "",
         "fix": "",
         "example": ""
       },
@@ -648,13 +648,13 @@
       },
       {
         "rule": "repo.image_block_wired",
-        "status": "FAIL",
+        "status": "PASS",
         "since": "0.280.0",
-        "violations": 7,
+        "violations": 0,
         "deferred": false,
         "inert": false,
         "inert_reason": "",
-        "fix": "Paste `luxarch --emit image-block` into the Makefile and delete the hand-written publish and deploy targets; set its settings ABOVE it (REGISTRY, and as needed RELEASE_REGISTRY, PLATFORMS for a multi-arch image, PUBLIC_REGISTRY for a public copy, IMAGE_NAME, BUILD_CONTEXT, IMAGES for more than one image). Where the block cannot serve this repo, escalate to the luxarch maintainer and leave this red lit: a hand-written copy is the drift the block exists to end. See --doc FLEET-BUILD-DEPLOY-STANDARD.",
+        "fix": "",
         "example": ""
       },
       {
@@ -791,20 +791,20 @@
       }
     ],
     "summary": {
-      "PASS": 52,
-      "FAIL": 1,
+      "PASS": 54,
+      "FAIL": 0,
       "XFAIL": 0,
       "XPASS": 0,
-      "INERT": 14
+      "INERT": 13
     }
   },
   "summary": {
-    "PASS": 55,
-    "FAIL": 1,
+    "PASS": 57,
+    "FAIL": 0,
     "XFAIL": 0,
     "XPASS": 0,
-    "INERT": 14
+    "INERT": 13
   },
-  "commit": "fadb8474226d2f108b1f248306b0ea229cb68786",
-  "generated_at": "2026-10-13T06:08:43Z"
+  "commit": "19e81624d80625a2c6af7596022703b6868067d2",
+  "generated_at": "2026-10-13T06:49:20Z"
 }

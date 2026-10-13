@@ -82,8 +82,8 @@ cd src && npx http-server
 ### Option 2: Docker
 
 ```bash
-# Run the pre-built image (no clone needed)
-docker run -d -p 8080:8080 --name luxmark ghcr.io/luxardolabs/luxmark:latest
+# Run a released image (no clone needed); pick the version from the Releases page
+docker run -d -p 8080:8080 --name luxmark ghcr.io/luxardolabs/luxmark:2026.10.0
 
 # Or build from source
 docker build -t luxmark .

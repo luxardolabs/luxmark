@@ -19,18 +19,30 @@ compose*.yml
 .env.*
 
 # OS files
-.DS_Store
-Thumbs.db
+**/.DS_Store
+**/Thumbs.db
 
 # IDE files
 .vscode/
 .idea/
-*.swp
-*.swo
+**/*.swp
+**/*.swo
 
 # Logs
-*.log
+**/*.log
 
 # Node (if added later)
 node_modules/
-npm-debug.log*
+**/npm-debug.log*
+
+# Every file pattern .gitignore ignores, at ANY depth (a bare pattern here matches only the root).
+# `git status` never lists an ignored file, so the release's clean-tree check cannot see one, yet it
+# is in the build context: a stray `src/js/notes.tmp` was served by the released image.
+# tests/supply-chain.test.js locks this list against .gitignore.
+**/.build.env
+**/*.tmp
+**/*.temp
+**/test.html
+**/*.pyc
+**/*.pyo
+**/__pycache__/

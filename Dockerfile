@@ -1,5 +1,5 @@
 # Multi-stage build for minimal final image
-FROM nginx:1.31-alpine
+FROM nginx:1.31-alpine AS production
 
 # Provenance build args — the fleet-canonical names (repo.dockerfile_provenance_args). An image
 # whose revision cannot be traced to a commit is unauditable after the fact.
@@ -63,3 +63,8 @@ USER nginx
 EXPOSE 8080
 
 CMD ["nginx", "-g", "daemon off;"]
+
+# The suite's image (`make test-build`, from the image block): the production layers unchanged. The
+# tests run in node:24 against the source, so the image adds nothing. Local builds pass
+# `--target production`, so this stage never becomes what they build.
+FROM production AS test

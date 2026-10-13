@@ -20,3 +20,7 @@ LUX_REGISTRY := registry.example.internal:5000
 PROD_JUMP := jump.example.com
 PROD_NODE := 10.0.0.1
 PROD_DIR  := /opt/luxardolabs/luxmark
+
+# Where a dev stack (`make dev-deploy`, which pins .env.dev and runs compose locally) is reachable,
+# for the smoke probe it ends with. Unset, `make smoke` refuses to run.
+# SMOKE_URL := http://127.0.0.1:8080

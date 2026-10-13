@@ -137,4 +137,4 @@ docker compose up -d --wait
 curl -s http://localhost:8080/version.json   # should report the new version
 ```
 
-Maintainers deploy the hosted site with `make prod-deploy` after `make release-ghcr` (see the Makefile's Production section).
+Maintainers deploy the hosted site with `make prod-deploy` after `make release` (see the Makefile's Production section).
