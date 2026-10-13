@@ -1,5 +1,5 @@
 # Multi-stage build for minimal final image
-FROM nginx:alpine
+FROM nginx:1.31-alpine
 
 # Provenance build args — the fleet-canonical names (repo.dockerfile_provenance_args). An image
 # whose revision cannot be traced to a commit is unauditable after the fact.
@@ -20,7 +20,7 @@ LABEL org.opencontainers.image.title="luxmark" \
       app.name="luxmark" \
       app.version="${BUILD_VERSION}"
 
-# Upgrade the base's OS packages: nginx:alpine lags Alpine's security fixes, and the release gate
+# Upgrade the base's OS packages: nginx:1.31-alpine lags Alpine's security fixes, and the release gate
 # (`luxaudit --image-archive`) refuses a candidate carrying a fixable HIGH/CRITICAL.
 RUN apk upgrade --no-cache
 
