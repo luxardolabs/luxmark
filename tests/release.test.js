@@ -223,23 +223,22 @@ test('a dirty working tree is refused before anything is built', () => {
   assert.equal(builds(r.calls).length, 0, r.trace);
 });
 
-test('a dirty tree in a checkout git distrusts (another uid) is still refused', () => {
-  const r = release({
-    env: { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
-    setup: (s) => {
-      writeFileSync(join(s.dir, 'stray.txt'), 'uncommitted\n');
-      execFileSync('chown', ['-R', '4242:4242', s.dir]);
-    },
+// A checkout git cannot read is refused at the block's first git read (is the makefile tracked?),
+// before the clean-tree check: a git that cannot answer never reads as "tracked" or "clean".
+for (const [name, setup] of [
+  ['a dirty checkout git distrusts (another uid)', (s) => {
+    writeFileSync(join(s.dir, 'stray.txt'), 'uncommitted\n');
+    execFileSync('chown', ['-R', '4242:4242', s.dir]);
+  }],
+  ['a checkout whose HEAD git cannot read', (s) => writeFileSync(join(s.dir, '.git', 'HEAD'), 'garbage\n')],
+]) {
+  test(`${name} is refused before anything is built`, () => {
+    const r = release({ env: { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }, setup });
+    assert.notEqual(r.status, 0, r.out);
+    assert.match(r.out, /default makefile \(Makefile\) is not tracked by git/);
+    assert.equal(builds(r.calls).length, 0, r.trace);
   });
-  assert.notEqual(r.status, 0, r.out);
-  assert.equal(builds(r.calls).length, 0, r.trace);
-});
-
-test('a git status that fails is a refusal, never an empty "clean"', () => {
-  const r = release({ setup: (s) => writeFileSync(join(s.dir, '.git', 'HEAD'), 'garbage\n') });
-  assert.notEqual(r.status, 0, r.out);
-  assert.equal(builds(r.calls).length, 0, r.trace);
-});
+}
 
 test('a tag that exists only locally is refused before anything is built (the Release hangs off origin\'s tag)', () => {
   const r = release({ tag: 'local' });
