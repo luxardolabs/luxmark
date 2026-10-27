@@ -166,6 +166,8 @@ build-local: ## Build for local architecture only (quick, no buildx)
 # platform is scanned by digest, and only then is :$(VERSION) created on GHCR, the registry prod and
 # self-hosters pull from. No :latest: a released version is the only public tag.
 RELEASE_REGISTRY := ghcr.io
+# The notes the GitHub Release publishes: this file, never one an environment variable names.
+RELEASE_NOTES    := src/release_notes/$(VERSION).md
 IMAGE_NAME       := luxardolabs/$(PROJECT_NAME)
 PLATFORMS        := $(PLATFORM)
 # Pinned with `:=`: the block's `?=` reads these from the environment, and a stray BUILD_CONTEXT or
@@ -2336,28 +2338,36 @@ githooks: ## Point git at the COMMITTED hooks (run once per clone)
 	git config core.hooksPath hooks
 	@echo '$(GREEN)core.hooksPath -> hooks/$(NC)'
 
-# ── What a release, a guard run and the gate may take from outside the makefiles: nothing ──────────
-# Checked at parse time, so no make flag can skip it: `-i` ignores a failed recipe and `-o` skips a
-# prerequisite, but neither reaches an $(error) here. For these goals every input is the makefiles' own:
-# - no variable from the command line (or MAKEFLAGS): it would override any `:=` here, choosing the
-#   scanner, the Dockerfile, the build args, a guard image or the gate's legs;
-# - no `-e`, which lets the whole environment override the makefiles, and no `-i`;
-# - the registries only from Makefile.local. For the release goals they must be set there, with
-#   PRIVATE_REGISTRY declared, so the image block holds every candidate to the private host.
+# ── What a release, a deploy, a guard run and the gate may take from outside the makefiles ─────────
+# Guards against mistakes on the build host (a stray flag, a variable left in the shell), not against
+# someone who controls that shell: they can run docker and gh directly. Checked at parse time, so no make
+# flag skips it: `-i` ignores a failed recipe and `-o` skips a prerequisite, but neither reaches an
+# $(error) here.
+# - No goal below runs under `-i`. prod-deploy refuses an unpublished VERSION on its own recipe line,
+#   which `-i` would step past and pin the node to a tag it cannot pull.
+# - A release, a guard run and the gate take every input from the makefiles: no variable from the
+#   command line (or MAKEFLAGS), which would override any `:=` here; no `-e`; the registries and the
+#   gate's legs only from the makefiles. The release goals need the registries set in Makefile.local,
+#   PRIVATE_REGISTRY included, so the image block holds every candidate to the private host.
+# - prod-deploy keeps its command line: `make prod-deploy MANUAL_VERSION=<v>` is the rollback.
 RELEASE_GOALS := release publish-sha dev-deploy guard-upgrade
 GATE_GOALS    := check guard-version-check honest lint arch audit gitleaks status
-GUARDED_GOALS := $(filter $(RELEASE_GOALS) $(GATE_GOALS),$(MAKECMDGOALS))
+DEPLOY_GOALS  := prod-deploy prod-sync
+GUARDED_GOALS := $(filter $(RELEASE_GOALS) $(GATE_GOALS) $(DEPLOY_GOALS),$(MAKECMDGOALS))
+INPUT_GOALS   := $(filter $(RELEASE_GOALS) $(GATE_GOALS),$(MAKECMDGOALS))
 # A dry run (`make -n`, how luxarch reads this makefile) runs no recipe line, and every $(MAKE) in one
 # inherits -n, so it is exempt; no recipe here carries a `+` that would run under -n.
 mk_flags := $(filter-out -%,$(firstword $(MAKEFLAGS)))
 ifeq ($(findstring n,$(mk_flags)),)
 ifneq ($(GUARDED_GOALS),)
-$(if $(findstring e,$(mk_flags)),$(error REFUSING: make -e lets the environment override this makefile, and $(GUARDED_GOALS) takes its inputs only from the makefiles))
 $(if $(findstring i,$(mk_flags)),$(error REFUSING: make -i ignores every failure, so $(GUARDED_GOALS) could not fail: run it without -i))
-$(if $(strip $(MAKEOVERRIDES)),$(error REFUSING: $(GUARDED_GOALS) takes no variables from the command line or MAKEFLAGS ($(MAKEOVERRIDES)): set them in the Makefile or Makefile.local))
+endif
+ifneq ($(INPUT_GOALS),)
+$(if $(findstring e,$(mk_flags)),$(error REFUSING: make -e lets the environment override this makefile, and $(INPUT_GOALS) takes its inputs only from the makefiles))
+$(if $(strip $(MAKEOVERRIDES)),$(error REFUSING: $(INPUT_GOALS) takes no variables from the command line or MAKEFLAGS ($(MAKEOVERRIDES)): set them in the Makefile or Makefile.local))
 $(foreach v,LUX_REGISTRY REGISTRY PRIVATE_REGISTRY CHECK_LEGS,$(if $(filter environment command,$(firstword $(origin $v))),$(error REFUSING: $v comes from the $(origin $v), not the makefiles: set it in Makefile.local)))
+endif
 ifneq ($(filter $(RELEASE_GOALS),$(MAKECMDGOALS)),)
 $(foreach v,LUX_REGISTRY REGISTRY PRIVATE_REGISTRY,$(if $(strip $($v)),,$(error REFUSING: $v is empty: add it to Makefile.local as a literal (see Makefile.local.example))))
-endif
 endif
 endif

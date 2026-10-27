@@ -49,6 +49,8 @@ case "$1 $2" in
   "auth status") [ "$GH_AUTH" = fail ] && exit 1 ;;
   "release view") [ "$GH_EXISTS" = yes ] || exit 1 ;;
 esac
+if [ "$1" = images ] && [ -n "$LOCAL_TAGS" ]; then echo "$LOCAL_TAGS"; exit 0; fi
+if [ "$1" = run ] && [ -n "$GUARD_FAIL" ]; then exit 1; fi
 exit 0
 `;
 // git whose `status` fails (exit 128, nothing on stdout) while every other command works, as in a
@@ -324,10 +326,10 @@ test('the command line cannot inject a build arg through BUILD_DATE', () => {
   assert.ok(!builds(r.calls).some((c) => c.includes('EVIL=1')), r.trace);
 });
 
-test('guard-upgrade refuses without REGISTRY, and leaves every pin as it is', () => {
-  const r = release({ target: 'guard-upgrade', local: 'LUX_REGISTRY := reg.test\n' });
+test('guard-upgrade refuses without REGISTRY, and never falls back to an older local image', () => {
+  const r = release({ target: 'guard-upgrade', local: 'LUX_REGISTRY := reg.test\n', env: { LOCAL_TAGS: '0.1.0' } });
   assert.notEqual(r.status, 0, r.out);
-  assert.match(r.out, /REGISTRY is empty/);
+  assert.match(r.out, /REGISTRY is empty: add it/);
   assert.equal(readFileSync(join(r.dir, 'Makefile'), 'utf8'), readFileSync(join(root, 'Makefile'), 'utf8'));
 });
 
@@ -380,16 +382,10 @@ test('LUX_REGISTRY from the environment cannot choose the scanner', () => {
 test('make -e release is refused: the environment never overrides the makefiles', () => {
   const r = release({ args: ['-e'], env: { DOCKERFILE: 'Other.Dockerfile' } });
   assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, /make -e lets the environment override/);
   assert.equal(anyPush(r.calls).length, 0, r.trace);
 });
 
-for (const args of [['-o', 'require-registry'], ['-i']]) {
-  test(`guard-upgrade ${args.join(' ')} still refuses without REGISTRY, and leaves every pin as it is`, () => {
-    const r = release({ target: 'guard-upgrade', local: 'LUX_REGISTRY := reg.test\n', args });
-    assert.notEqual(r.status, 0, r.out);
-    assert.equal(readFileSync(join(r.dir, 'Makefile'), 'utf8'), readFileSync(join(root, 'Makefile'), 'utf8'));
-  });
-}
 
 for (const [target, arg] of [['status', 'LUXARCH_VERSION=0.1.0'], ['status', 'LUXLINT_IMAGE=evil.example/pass:1'], ['check', 'CHECK_LEGS=test'], ['arch', 'LUXARCH_IMAGE=evil.example/pass:1']]) {
   test(`make ${target} ${arg} is refused: the guards and the gate's legs are the makefile's`, () => {
@@ -414,3 +410,46 @@ test('every guard runs through GUARD_RUN, and nothing mounts $(PWD)', () => {
   }
   assert.doesNotMatch(mk, /-v \$\(PWD\)/, 'a $(PWD) mount reads the shell\'s directory, not this checkout');
 });
+
+test('make -i lint is refused: a failed guard could not fail it', () => {
+  const r = release({ target: 'lint', args: ['-i'], env: { GUARD_FAIL: '1' } });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, /make -i ignores every failure/);
+});
+
+test('make -e lint is refused: the environment cannot choose the guard image', () => {
+  const r = release({ target: 'lint', args: ['-e'], env: { LUXLINT_IMAGE: 'evil.example/pass:1' } });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, /make -e lets the environment override/);
+  assert.deepEqual(r.calls.filter((c) => c.includes('evil.example')), [], r.trace);
+});
+
+test('on a clean clone, LUX_REGISTRY from the environment cannot choose the guard make lint runs', () => {
+  const r = release({ target: 'lint', local: null, env: { LUX_REGISTRY: 'evil.example' } });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, /LUX_REGISTRY comes from the environment/);
+  assert.deepEqual(r.calls.filter((c) => c.includes('evil.example')), [], r.trace);
+});
+
+test('the release publishes its own notes, never a file the environment names', () => {
+  const r = release({ env: { RELEASE_NOTES: 'Dockerfile' } });
+  assert.equal(r.status, 0, r.out);
+  const create = r.calls.filter((c) => c.startsWith('gh release create'));
+  assert.equal(create.length, 1, r.trace);
+  assert.match(create[0], new RegExp(`--notes-file src/release_notes/${VERSION}\\.md`));
+});
+
+const PROD_LOCAL = 'LUX_REGISTRY := reg.test\nPROD_JUMP := jump.test\nPROD_NODE := 10.9.9.9\nPROD_DIR := /opt/x\nPROD_URL := http://127.0.0.1:9\n';
+const fakeRemote = ({ parent }) => {
+  for (const n of ['ssh', 'curl']) {
+    writeFileSync(join(parent, n), `#!/bin/sh\necho "${n} $*" >> "$DOCKER_LOG"\n${n === 'ssh' ? 'cat >> "$DOCKER_LOG"\n' : ''}echo '{"version":"0"}'\n`);
+    chmodSync(join(parent, n), 0o755);
+  }
+};
+for (const args of [[], ['-i']]) {
+  test(`make ${args.join(' ')} prod-deploy of an unpublished VERSION sends nothing to the node`.replace('  ', ' '), () => {
+    const r = release({ target: 'prod-deploy', args, local: PROD_LOCAL, setup: fakeRemote });
+    assert.notEqual(r.status, 0, r.out);
+    assert.deepEqual(r.calls.filter((c) => c.startsWith('ssh')), [], r.trace);
+  });
+}
