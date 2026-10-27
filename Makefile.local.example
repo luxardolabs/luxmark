@@ -17,6 +17,11 @@ LUX_REGISTRY := registry.example.internal:5000
 # command line could redirect.
 REGISTRY     := registry.example.internal:5000
 
+# The host this repo declares private. The image block refuses a REGISTRY on any other host, so an
+# unscanned candidate never reaches a public registry; release, publish-sha and dev-deploy refuse
+# without it.
+PRIVATE_REGISTRY := registry.example.internal:5000
+
 # Optional — defaults to LUX_REGISTRY. Set only if the app image lives somewhere else.
 # LOCAL_REGISTRY := registry.example.internal:5000
 

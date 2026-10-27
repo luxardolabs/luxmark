@@ -60,14 +60,16 @@ exec ${REAL_GIT} "$@"
 `;
 
 // tag: true (annotated, at HEAD, pushed to origin) | 'local' (at HEAD, never pushed) | false
-function sandbox({ tag = true, registry = 'reg.test' } = {}) {
+function sandbox({ tag = true, registry = 'reg.test', local } = {}) {
   const parent = mkdtempSync(join(tmpdir(), 'luxmark-release-'));
   const dir = join(parent, 'luxmark');
   mkdirSync(dir);
   copyFileSync(join(root, 'Makefile'), join(dir, 'Makefile'));
   // The topology lives where the real repo keeps it: a gitignored Makefile.local. The block refuses a
   // REGISTRY from the shell or the command line, so it can only come from here.
-  writeFileSync(join(dir, 'Makefile.local'), `LUX_REGISTRY := ${registry}\nREGISTRY     := ${registry}\n`);
+  // `local` replaces that file's text; null leaves it out, as in a clean clone.
+  if (local === undefined) writeFileSync(join(dir, 'Makefile.local'), `LUX_REGISTRY := ${registry}\nREGISTRY     := ${registry}\nPRIVATE_REGISTRY := ${registry}\n`);
+  else if (local !== null) writeFileSync(join(dir, 'Makefile.local'), local);
   writeFileSync(join(dir, '.gitignore'), 'Makefile.local\n');
   // The block refuses a Dockerfile the commit does not hold; the fake docker never builds it.
   writeFileSync(join(dir, 'Dockerfile'), 'FROM scratch\n');
@@ -92,8 +94,8 @@ function sandbox({ tag = true, registry = 'reg.test' } = {}) {
   return { parent, dir };
 }
 
-function release({ manifest = 'notfound', scan = 'pass', plats = 'both', tag = true, setup = () => {}, args = [], fromParent = false, env = {}, target = 'release', registry = 'reg.test', failStatus = false } = {}) {
-  const sb = sandbox({ tag, registry });
+function release({ manifest = 'notfound', scan = 'pass', plats = 'both', tag = true, setup = () => {}, args = [], fromParent = false, env = {}, target = 'release', registry = 'reg.test', failStatus = false, local } = {}) {
+  const sb = sandbox({ tag, registry, local });
   setup(sb);
   if (failStatus) {
     writeFileSync(join(sb.parent, 'git'), FAILING_STATUS_GIT);
@@ -287,4 +289,51 @@ test('every file .gitignore ignores is kept out of the image\'s build context, a
   const docker = new Set(readFileSync(join(root, '.dockerignore'), 'utf8').split('\n').map((l) => l.trim()));
   const missing = ignored.filter((p) => !docker.has(`**/${p}`) && !(p.startsWith('.env') && docker.has(p)) && p !== 'Makefile.local');
   assert.deepEqual(missing, [], 'add **/<pattern> to .dockerignore');
+});
+
+const anyPush = (calls) => builds(calls).concat(promotions(calls), pushes(calls));
+
+for (const host of ['ghcr.io', 'docker.io']) {
+  test(`a REGISTRY on a public host (${host}) is refused: an unscanned candidate never leaves the private registry`, () => {
+    const r = release({ local: `LUX_REGISTRY := reg.test\nREGISTRY     := ${host}\nPRIVATE_REGISTRY := reg.test\n` });
+    assert.notEqual(r.status, 0, r.out);
+    assert.equal(anyPush(r.calls).length, 0, r.trace);
+  });
+}
+
+test('a Makefile.local without REGISTRY is refused before anything is built', () => {
+  const r = release({ local: 'LUX_REGISTRY := reg.test\n' });
+  assert.notEqual(r.status, 0, r.out);
+  assert.equal(anyPush(r.calls).length, 0, r.trace);
+});
+
+for (const arg of ['LUXAUDIT_IMAGE=evil.example/always-pass:1', 'LUX_REGISTRY=evil.example']) {
+  test(`the command line cannot choose the scanner (${arg.split('=')[0]})`, () => {
+    const r = release({ args: [arg] });
+    assert.deepEqual(r.calls.filter((c) => c.includes('evil.example')), [], r.trace);
+  });
+}
+
+test('the command line cannot forge the commit the image says it was built from', () => {
+  const r = release({ args: ['BUILD_COMMIT=0000000'] });
+  assert.ok(!builds(r.calls).some((c) => c.includes('BUILD_COMMIT=0000000')), r.trace);
+});
+
+test('the command line cannot inject a build arg through BUILD_DATE', () => {
+  const r = release({ args: ['BUILD_DATE=x --build-arg EVIL=1'] });
+  assert.ok(!builds(r.calls).some((c) => c.includes('EVIL=1')), r.trace);
+});
+
+test('guard-upgrade refuses without REGISTRY, and leaves every pin as it is', () => {
+  const r = release({ target: 'guard-upgrade', local: 'LUX_REGISTRY := reg.test\n' });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, /REGISTRY is unset/);
+  assert.equal(readFileSync(join(r.dir, 'Makefile'), 'utf8'), readFileSync(join(root, 'Makefile'), 'utf8'));
+});
+
+test('a Makefile.local without PRIVATE_REGISTRY is refused before anything is built', () => {
+  const r = release({ local: 'LUX_REGISTRY := reg.test\nREGISTRY     := ghcr.io\n' });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, /PRIVATE_REGISTRY is empty/);
+  assert.equal(anyPush(r.calls).length, 0, r.trace);
 });

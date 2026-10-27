@@ -38,7 +38,7 @@ LUXLINT_VERSION  := 0.70.0
 LUXAUDIT_VERSION := 0.15.0
 LUXARCH_IMAGE    := $(LUX_REGISTRY)/luxardolabs/luxarch:$(LUXARCH_VERSION)
 LUXLINT_IMAGE    := $(LUX_REGISTRY)/luxardolabs/luxlint:$(LUXLINT_VERSION)
-LUXAUDIT_IMAGE   := $(LUX_REGISTRY)/luxardolabs/luxaudit:$(LUXAUDIT_VERSION)
+override LUXAUDIT_IMAGE := $(LUX_REGISTRY)/luxardolabs/luxaudit:$(LUXAUDIT_VERSION)
 # The names the emitted gitleaks and guard-upgrade assets read.
 LUXLINT          := $(LUXLINT_IMAGE)
 
@@ -54,9 +54,9 @@ GHCR_IMAGE := ghcr.io/$(GITHUB_USER)/$(PROJECT_NAME)
 # If a host isn't logged in yet, run `make docker-login-ghcr` once.
 
 # Build settings
-BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+override BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 # The commit the image is built FROM — the revision label is worthless without it.
-BUILD_COMMIT := $(shell git -c safe.directory=$(CURRENT_DIR) rev-parse --short HEAD 2>/dev/null || echo unknown)
+override BUILD_COMMIT := $(shell git -c safe.directory=$(CURRENT_DIR) rev-parse --short HEAD 2>/dev/null || echo unknown)
 # For quick local development builds - amd64 only (faster iteration)
 PLATFORM_DEV := linux/amd64
 # For release builds - multi-arch (amd64 + arm64)
@@ -1811,7 +1811,7 @@ smoke: ## Probe the deployed dev stack: build commit, static asset, forged Host 
 .PHONY: test
 test: ## Run the test suite (node:test, in docker — no npm install, no build step)
 	@echo '$(BLUE)Running the luxmark test suite...$(NC)'
-	docker run --rm -v $(PWD):/w -w /w node:24 node --test 'tests/*.test.js'
+	docker run --rm -v "$(CURDIR)":/w -w /w node:24 node --test 'tests/*.test.js'
 
 .PHONY: serve
 serve: ## Run the container locally on :8080 (was `make test` — that name now runs the SUITE)
@@ -1961,6 +1961,23 @@ logs: ## Show container logs
 # escalating a genuinely-wrong guard to the maintainer, never by routing around it.
 # ---------------------------------------------------------------------------------------------
 
+# luxarch:guard-run asset v1 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit guard-run`.
+# ── GUARD_RUN: how every guard sees this checkout ───────────────────────────────────────────────────
+# Emitted by `luxarch --emit guard-run`; paste it above the targets that run the guards (`status:`, and
+# `arch:` / `lint:` / `audit:` where they run a guard image).
+#
+# Agents work in linked worktrees (`.claude/worktrees/<ISSUE-KEY>`). A worktree's `.git` is a file
+# pointing into the MAIN checkout's `.git`, and the hooks keep their session state (the heartbeat) in
+# the main checkout's `.claude/`. A guard that mounts only the worktree at /repo can read neither:
+# every rule that reads git or the heartbeat goes INERT there, and `make status` run in a worktree
+# commits those INERT verdicts as the repo's record. So GUARD_RUN also mounts the main checkout,
+# read-only, at its own path, where the worktree's `.git` file points. In the main checkout itself
+# there is nothing more to mount. Not covered: a worktree whose `.git` names its gitdir by a RELATIVE
+# path (`worktree.useRelativePaths`), which resolves from /repo to somewhere else; its git-reading
+# rules stay INERT. Claude Code writes absolute pointers.
+GUARD_MAIN := $(shell d=$$(git -C "$(CURDIR)" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && [ "$$(basename "$$d")" = .git ] && dirname "$$d")
+GUARD_RUN = docker run --rm -v "$(CURDIR)":/repo $(if $(filter-out $(CURDIR),$(GUARD_MAIN)),-v "$(GUARD_MAIN)":"$(GUARD_MAIN)":ro)
+
 .PHONY: require-registry
 require-registry: ## Fail with the remedy when site-local topology is absent
 	@if [ -z "$(LUX_REGISTRY)" ]; then \
@@ -1968,6 +1985,28 @@ require-registry: ## Fail with the remedy when site-local topology is absent
 	  echo 'The registry host is site-local topology, deliberately not committed (this repo is public).'; \
 	  exit 1; \
 	fi
+	@if [ -z "$(REGISTRY)" ]; then \
+	  echo '$(RED)REGISTRY is unset — add it to Makefile.local as a literal (see Makefile.local.example).$(NC)'; \
+	  exit 1; \
+	fi
+
+# guard-upgrade is emitted text; its registry precondition is declared here, beside it.
+guard-upgrade: require-registry
+
+# The topology every candidate push trusts, held to the makefiles. PRIVATE_REGISTRY, a literal in
+# Makefile.local, is the host the image block holds REGISTRY to, so an unscanned candidate can never go
+# to a public registry; left empty, the block checks nothing. LUX_REGISTRY names the scanner image, so
+# one taken from the command line would choose the scan's verdict.
+.PHONY: require-release-topology
+require-release-topology:
+	@if [ -z "$(strip $(PRIVATE_REGISTRY))" ]; then \
+	  echo '$(RED)REFUSING: PRIVATE_REGISTRY is empty — add it to Makefile.local as a literal (see Makefile.local.example).$(NC)'; \
+	  exit 1; \
+	fi
+	@case '$(origin LUX_REGISTRY)' in 'command line'|'environment override') \
+	  echo '$(RED)REFUSING: LUX_REGISTRY comes from the $(origin LUX_REGISTRY), not Makefile.local: it names the scanner image.$(NC)'; \
+	  exit 1;; esac
+release publish-sha dev-deploy: require-release-topology
 
 .PHONY: guard-version-check
 guard-version-check: require-registry ## FAIL if any guard pin is behind the published latest
@@ -2032,23 +2071,23 @@ guard-upgrade:  ## Bump every guard pin to the published latest (prints what new
 honest: ## Prove no luxarch rule family scanned ZERO files (the anti-hollow-green step)
 	@# Fails ONLY when a rule family inspected nothing — never on reds. Without it a green board can
 	@# hide a blind guard family.
-	docker run --rm -v $(PWD):/repo $(LUXARCH_IMAGE) --assert-scans
+	$(GUARD_RUN) $(LUXARCH_IMAGE) --assert-scans
 
 .PHONY: lint
 lint: ## luxlint — eslint over src/js + markdown + secret/test checks (no Python in this repo)
-	docker run --rm -v $(PWD):/repo $(LUXLINT_IMAGE)
+	$(GUARD_RUN) $(LUXLINT_IMAGE)
 
 .PHONY: format
 format: ## Apply every canonical formatter IN PLACE (the canonical fixer — never a bare ruff/mdformat)
-	docker run --rm -v $(PWD):/repo $(LUXLINT_IMAGE) --format
+	$(GUARD_RUN) $(LUXLINT_IMAGE) --format
 
 .PHONY: arch
 arch: ## luxarch — architecture conformance (static-web kind; reads .luxarch.toml)
-	docker run --rm -v $(PWD):/repo $(LUXARCH_IMAGE)
+	$(GUARD_RUN) $(LUXARCH_IMAGE)
 
 .PHONY: audit
 audit: ## luxaudit — dependency CVEs. luxmark's deps are CDN tags, so expect 0 packages; see .luxaudit.toml
-	docker run --rm -v $(PWD):/repo $(LUXAUDIT_IMAGE)
+	$(GUARD_RUN) $(LUXAUDIT_IMAGE)
 
 .PHONY: gitleaks gitleaks-staged
 # luxarch:gitleaks asset v17 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit gitleaks`.
@@ -2297,22 +2336,6 @@ check: guard-version-check honest ## THE fleet gate: runs every leg, then fails 
 # Regenerate the committed guard-status files (the fleet reads these instead of re-running).
 # STAMP refuses a document that is not the expected guard's own (`"guard"` in every --json), so a
 # crossed or empty file can never be committed as this repo's record. See `luxarch --doc FLEET-STATUS`.
-# luxarch:guard-run asset v1 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit guard-run`.
-# ── GUARD_RUN: how every guard sees this checkout ───────────────────────────────────────────────────
-# Emitted by `luxarch --emit guard-run`; paste it above the targets that run the guards (`status:`, and
-# `arch:` / `lint:` / `audit:` where they run a guard image).
-#
-# Agents work in linked worktrees (`.claude/worktrees/<ISSUE-KEY>`). A worktree's `.git` is a file
-# pointing into the MAIN checkout's `.git`, and the hooks keep their session state (the heartbeat) in
-# the main checkout's `.claude/`. A guard that mounts only the worktree at /repo can read neither:
-# every rule that reads git or the heartbeat goes INERT there, and `make status` run in a worktree
-# commits those INERT verdicts as the repo's record. So GUARD_RUN also mounts the main checkout,
-# read-only, at its own path, where the worktree's `.git` file points. In the main checkout itself
-# there is nothing more to mount. Not covered: a worktree whose `.git` names its gitdir by a RELATIVE
-# path (`worktree.useRelativePaths`), which resolves from /repo to somewhere else; its git-reading
-# rules stay INERT. Claude Code writes absolute pointers.
-GUARD_MAIN := $(shell d=$$(git -C "$(CURDIR)" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && [ "$$(basename "$$d")" = .git ] && dirname "$$d")
-GUARD_RUN = docker run --rm -v "$(CURDIR)":/repo $(if $(filter-out $(CURDIR),$(GUARD_MAIN)),-v "$(GUARD_MAIN)":"$(GUARD_MAIN)":ro)
 STAMP = python3 -c 'import json,sys,os; d=json.load(open(sys.argv[1])); g=d.get("guard"); g==sys.argv[3] or sys.exit(f"status: {sys.argv[1]} holds {g!r} output, expected {sys.argv[3]!r}; refusing to stamp"); d["commit"]=os.environ["SHA"]; d["generated_at"]=os.environ["TS"]; json.dump(d,open(sys.argv[2],"w"),indent=2)'
 
 # `set -e`: a failed stamp (empty, invalid or another guard's --json) ABORTS the recipe — never a
