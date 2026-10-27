@@ -28,3 +28,8 @@ app  = "src"
 #
 # No [enums] / [hypertables] / [uuid] / [observability] / [tenant] / [components] / [importlinter] —
 # all are fastapi-web concerns and inert for a static-web target.
+
+# Who pushes: an agent pushes its work when it lands (owner decision 2026-10-26). Read by
+# unpushed-stop-guard and /wrap-up.
+[agents]
+push = "agent"

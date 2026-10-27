@@ -60,11 +60,17 @@ exec ${REAL_GIT} "$@"
 `;
 
 // tag: true (annotated, at HEAD, pushed to origin) | 'local' (at HEAD, never pushed) | false
-function sandbox({ tag = true } = {}) {
+function sandbox({ tag = true, registry = 'reg.test' } = {}) {
   const parent = mkdtempSync(join(tmpdir(), 'luxmark-release-'));
   const dir = join(parent, 'luxmark');
   mkdirSync(dir);
   copyFileSync(join(root, 'Makefile'), join(dir, 'Makefile'));
+  // The topology lives where the real repo keeps it: a gitignored Makefile.local. The block refuses a
+  // REGISTRY from the shell or the command line, so it can only come from here.
+  writeFileSync(join(dir, 'Makefile.local'), `LUX_REGISTRY := ${registry}\nREGISTRY     := ${registry}\n`);
+  writeFileSync(join(dir, '.gitignore'), 'Makefile.local\n');
+  // The block refuses a Dockerfile the commit does not hold; the fake docker never builds it.
+  writeFileSync(join(dir, 'Dockerfile'), 'FROM scratch\n');
   writeFileSync(join(dir, 'VERSION'), `${VERSION}\n`);
   for (const [name, body] of [['docker', FAKE_DOCKER], ['gh', FAKE_GH]]) {
     writeFileSync(join(parent, name), body);
@@ -87,7 +93,7 @@ function sandbox({ tag = true } = {}) {
 }
 
 function release({ manifest = 'notfound', scan = 'pass', plats = 'both', tag = true, setup = () => {}, args = [], fromParent = false, env = {}, target = 'release', registry = 'reg.test', failStatus = false } = {}) {
-  const sb = sandbox({ tag });
+  const sb = sandbox({ tag, registry });
   setup(sb);
   if (failStatus) {
     writeFileSync(join(sb.parent, 'git'), FAILING_STATUS_GIT);
@@ -96,7 +102,7 @@ function release({ manifest = 'notfound', scan = 'pass', plats = 'both', tag = t
   const log = join(sb.parent, 'docker.log');
   writeFileSync(log, '');
   const makeArgs = fromParent ? ['-C', 'luxmark'] : [];
-  const r = spawnSync('make', ['--no-print-directory', ...makeArgs, ...args, target, `LUX_REGISTRY=${registry}`], {
+  const r = spawnSync('make', ['--no-print-directory', ...makeArgs, ...args, target], {
     cwd: fromParent ? sb.parent : sb.dir,
     encoding: 'utf8',
     env: { ...process.env, HOME: sb.parent, PATH: `${sb.parent}:${process.env.PATH}`, DOCKER_LOG: log, MANIFEST: manifest, SCAN: scan, PLATS: plats, ...env },
