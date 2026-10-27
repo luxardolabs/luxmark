@@ -1990,24 +1990,6 @@ require-registry: ## Fail with the remedy when site-local topology is absent
 	  exit 1; \
 	fi
 
-# guard-upgrade is emitted text; its registry precondition is declared here, beside it.
-guard-upgrade: require-registry
-
-# The topology every candidate push trusts, held to the makefiles. PRIVATE_REGISTRY, a literal in
-# Makefile.local, is the host the image block holds REGISTRY to, so an unscanned candidate can never go
-# to a public registry; left empty, the block checks nothing. LUX_REGISTRY names the scanner image, so
-# one taken from the command line would choose the scan's verdict.
-.PHONY: require-release-topology
-require-release-topology:
-	@if [ -z "$(strip $(PRIVATE_REGISTRY))" ]; then \
-	  echo '$(RED)REFUSING: PRIVATE_REGISTRY is empty — add it to Makefile.local as a literal (see Makefile.local.example).$(NC)'; \
-	  exit 1; \
-	fi
-	@case '$(origin LUX_REGISTRY)' in 'command line'|'environment override') \
-	  echo '$(RED)REFUSING: LUX_REGISTRY comes from the $(origin LUX_REGISTRY), not Makefile.local: it names the scanner image.$(NC)'; \
-	  exit 1;; esac
-release publish-sha dev-deploy: require-release-topology
-
 .PHONY: guard-version-check
 guard-version-check: require-registry ## FAIL if any guard pin is behind the published latest
 	@# Fatal, not warn-only: an agent working off a stale guard gets advice the current rules would
@@ -2353,3 +2335,29 @@ status: require-registry ## Regenerate committed guard-status files (.lux*-statu
 githooks: ## Point git at the COMMITTED hooks (run once per clone)
 	git config core.hooksPath hooks
 	@echo '$(GREEN)core.hooksPath -> hooks/$(NC)'
+
+# ── What a release, a guard run and the gate may take from outside the makefiles: nothing ──────────
+# Checked at parse time, so no make flag can skip it: `-i` ignores a failed recipe and `-o` skips a
+# prerequisite, but neither reaches an $(error) here. For these goals every input is the makefiles' own:
+# - no variable from the command line (or MAKEFLAGS): it would override any `:=` here, choosing the
+#   scanner, the Dockerfile, the build args, a guard image or the gate's legs;
+# - no `-e`, which lets the whole environment override the makefiles, and no `-i`;
+# - the registries only from Makefile.local. For the release goals they must be set there, with
+#   PRIVATE_REGISTRY declared, so the image block holds every candidate to the private host.
+RELEASE_GOALS := release publish-sha dev-deploy guard-upgrade
+GATE_GOALS    := check guard-version-check honest lint arch audit gitleaks status
+GUARDED_GOALS := $(filter $(RELEASE_GOALS) $(GATE_GOALS),$(MAKECMDGOALS))
+# A dry run (`make -n`, how luxarch reads this makefile) runs no recipe line, and every $(MAKE) in one
+# inherits -n, so it is exempt; no recipe here carries a `+` that would run under -n.
+mk_flags := $(filter-out -%,$(firstword $(MAKEFLAGS)))
+ifeq ($(findstring n,$(mk_flags)),)
+ifneq ($(GUARDED_GOALS),)
+$(if $(findstring e,$(mk_flags)),$(error REFUSING: make -e lets the environment override this makefile, and $(GUARDED_GOALS) takes its inputs only from the makefiles))
+$(if $(findstring i,$(mk_flags)),$(error REFUSING: make -i ignores every failure, so $(GUARDED_GOALS) could not fail: run it without -i))
+$(if $(strip $(MAKEOVERRIDES)),$(error REFUSING: $(GUARDED_GOALS) takes no variables from the command line or MAKEFLAGS ($(MAKEOVERRIDES)): set them in the Makefile or Makefile.local))
+$(foreach v,LUX_REGISTRY REGISTRY PRIVATE_REGISTRY CHECK_LEGS,$(if $(filter environment command,$(firstword $(origin $v))),$(error REFUSING: $v comes from the $(origin $v), not the makefiles: set it in Makefile.local)))
+ifneq ($(filter $(RELEASE_GOALS),$(MAKECMDGOALS)),)
+$(foreach v,LUX_REGISTRY REGISTRY PRIVATE_REGISTRY,$(if $(strip $($v)),,$(error REFUSING: $v is empty: add it to Makefile.local as a literal (see Makefile.local.example))))
+endif
+endif
+endif

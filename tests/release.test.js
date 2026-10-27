@@ -327,7 +327,7 @@ test('the command line cannot inject a build arg through BUILD_DATE', () => {
 test('guard-upgrade refuses without REGISTRY, and leaves every pin as it is', () => {
   const r = release({ target: 'guard-upgrade', local: 'LUX_REGISTRY := reg.test\n' });
   assert.notEqual(r.status, 0, r.out);
-  assert.match(r.out, /REGISTRY is unset/);
+  assert.match(r.out, /REGISTRY is empty/);
   assert.equal(readFileSync(join(r.dir, 'Makefile'), 'utf8'), readFileSync(join(root, 'Makefile'), 'utf8'));
 });
 
@@ -336,4 +336,81 @@ test('a Makefile.local without PRIVATE_REGISTRY is refused before anything is bu
   assert.notEqual(r.status, 0, r.out);
   assert.match(r.out, /PRIVATE_REGISTRY is empty/);
   assert.equal(anyPush(r.calls).length, 0, r.trace);
+});
+
+// No make flag skips the release's preconditions: they are checked at parse time.
+const PUBLIC_LOCAL = 'LUX_REGISTRY := reg.test\nREGISTRY     := ghcr.io\n';
+const ghcrPushes = (calls) => anyPush(calls).filter((c) => c.includes('ghcr.io'));
+for (const [name, opts] of [
+  ['make -i release', { args: ['-i'] }],
+  ['make release -o <a prerequisite>', { args: ['-o', 'buildx-setup'] }],
+  ['MAKEFLAGS=i in the environment', { env: { MAKEFLAGS: 'i' } }],
+  ['make -i publish-sha', { args: ['-i'], target: 'publish-sha', tag: false }],
+  ['make -i dev-deploy', { args: ['-i'], target: 'dev-deploy', tag: false }],
+]) {
+  test(`${name} cannot push a candidate past a missing PRIVATE_REGISTRY`, () => {
+    const r = release({ local: PUBLIC_LOCAL, ...opts });
+    assert.notEqual(r.status, 0, r.out);
+    assert.deepEqual(ghcrPushes(r.calls), [], r.trace);
+  });
+}
+
+// Every release input is the makefiles' own: the command line changes none of them.
+for (const arg of [
+  'LUXAUDIT_VERSION=0.1.0',
+  'BUILD_ARGS=--build-arg BUILD_COMMIT=0000000 --target builder',
+  'BUILD_ARGS=--build-arg=BUILD_COMMIT=0000000 --target test',
+  'DOCKERFILE=Other.Dockerfile',
+  'BUILD_CONTEXT=src',
+]) {
+  test(`the command line cannot set ${arg.split('=')[0]} for a release (${arg})`, () => {
+    const r = release({ args: [arg] });
+    assert.notEqual(r.status, 0, r.out);
+    assert.match(r.out, /takes no variables from the command line/);
+    assert.equal(anyPush(r.calls).length, 0, r.trace);
+  });
+}
+
+test('LUX_REGISTRY from the environment cannot choose the scanner', () => {
+  const r = release({ local: 'REGISTRY     := reg.test\nPRIVATE_REGISTRY := reg.test\n', env: { LUX_REGISTRY: 'evil.example' } });
+  assert.notEqual(r.status, 0, r.out);
+  assert.deepEqual(r.calls.filter((c) => c.includes('evil.example')), [], r.trace);
+});
+
+test('make -e release is refused: the environment never overrides the makefiles', () => {
+  const r = release({ args: ['-e'], env: { DOCKERFILE: 'Other.Dockerfile' } });
+  assert.notEqual(r.status, 0, r.out);
+  assert.equal(anyPush(r.calls).length, 0, r.trace);
+});
+
+for (const args of [['-o', 'require-registry'], ['-i']]) {
+  test(`guard-upgrade ${args.join(' ')} still refuses without REGISTRY, and leaves every pin as it is`, () => {
+    const r = release({ target: 'guard-upgrade', local: 'LUX_REGISTRY := reg.test\n', args });
+    assert.notEqual(r.status, 0, r.out);
+    assert.equal(readFileSync(join(r.dir, 'Makefile'), 'utf8'), readFileSync(join(root, 'Makefile'), 'utf8'));
+  });
+}
+
+for (const [target, arg] of [['status', 'LUXARCH_VERSION=0.1.0'], ['status', 'LUXLINT_IMAGE=evil.example/pass:1'], ['check', 'CHECK_LEGS=test'], ['arch', 'LUXARCH_IMAGE=evil.example/pass:1']]) {
+  test(`make ${target} ${arg} is refused: the guards and the gate's legs are the makefile's`, () => {
+    const r = release({ target, args: [arg] });
+    assert.notEqual(r.status, 0, r.out);
+    assert.match(r.out, /takes no variables from the command line/);
+    assert.deepEqual(r.calls.filter((c) => c.includes('evil.example') || c.includes(':0.1.0')), [], r.trace);
+  });
+}
+
+test('CHECK_LEGS from the environment is refused', () => {
+  const r = release({ target: 'check', env: { CHECK_LEGS: 'test' } });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, /CHECK_LEGS comes from the environment/);
+});
+
+test('every guard runs through GUARD_RUN, and nothing mounts $(PWD)', () => {
+  const mk = readFileSync(join(root, 'Makefile'), 'utf8');
+  for (const target of ['honest', 'lint', 'format', 'arch', 'audit']) {
+    const recipe = mk.split(`\n${target}:`)[1].split('\n\n')[0];
+    assert.match(recipe, /\n\t\$\(GUARD_RUN\) /, `${target} must run its guard through $(GUARD_RUN)`);
+  }
+  assert.doesNotMatch(mk, /-v \$\(PWD\)/, 'a $(PWD) mount reads the shell\'s directory, not this checkout');
 });
