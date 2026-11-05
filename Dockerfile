@@ -52,10 +52,11 @@ ENV APP_VERSION=${BUILD_VERSION} \
     APP_COMMIT=${BUILD_COMMIT} \
     APP_BUILD_TIMESTAMP=${BUILD_TIMESTAMP}
 
-# Create necessary directories and set permissions
+# The served files stay root-owned and world-readable, so code running as nginx cannot rewrite the
+# app; nginx owns only the paths it writes (cache, logs, pid).
 RUN mkdir -p /var/cache/nginx /var/log/nginx /var/run && \
-    chown -R nginx:nginx /usr/share/nginx/html /var/cache/nginx /var/log/nginx /var/run && \
-    chmod -R 755 /usr/share/nginx/html
+    chown -R nginx:nginx /var/cache/nginx /var/log/nginx /var/run && \
+    chmod -R a+rX,go-w /usr/share/nginx/html
 
 # Run as non-root user
 USER nginx

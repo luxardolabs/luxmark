@@ -3,7 +3,7 @@ name: adversarial-audit
 description: Attack the WHOLE platform, not just a change — take the attack surface from `luxarch --sweep attack-surface`, rank it by this repo's committed audit profile, hand each slice to an independent attacker, verify every break with a second agent, and file each confirmed break in LuxPM with its failing test. Direct it in plain words ("what changed since the last release", "just payments, go deep", "quick"); re-runs attack only what changed. Use for a first full review of an app, on the owner's schedule, or when asked to audit or red-team the platform.
 ---
 
-<!-- luxarch:adversarial-audit-skill asset v6 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit adversarial-audit-skill`. -->
+<!-- luxarch:adversarial-audit-skill asset v8 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit adversarial-audit-skill`. -->
 
 # Adversarial audit: the whole platform
 
@@ -21,7 +21,7 @@ docker run --rm -v <checkout>:/repo:ro -w /repo <luxarch image> --sweep attack-s
 
 `<checkout>` is the checkout's absolute path, written out: inside a worktree Claude Code refuses a mount computed at run time, such as `"$PWD"`.
 
-Also read the text form (the same command without `--json`). Its header lines say how many routes, jobs and entry points there are, the audit state (`attacked` / `stale` / `never` / `retired` slices), the profile state (`profile: none | current | needs re-check (<reasons>)`), and this run's `surface:` counts. Every route or job under `unresolved` is a target in its own right: a surface the guard cannot see is one nobody has checked. A route whose `auth` is `unknown` is attacked as if it were `anon`.
+Also read the text form (the same command without `--json`). Its header lines say how many routes, jobs and entry points there are, the audit state (`attacked` / `stale` / `never` / `retired` slices), the profile state (`profile: none | current | needs re-check (<reasons>)`), and this run's `surface:` counts. Every route or job under `unresolved` is a target in its own right: a surface the guard cannot see is one nobody has checked. A route whose `auth` is `unknown` is attacked as if it were `anon`. A mounted MCP server is one `TOOL` route per tool (`<mount>#<tool>`), sliced by tool module, with the mount's auth and the handler's writes (a tool's `user` is the guard's static reading of the middleware in front of the mount: attack it first, with no credential and with a forged one); `unresolved mounts: N` counts the mounted applications whose own routes the sweep could not read, and each is a whole application to attack.
 
 ## 2. The profile: set up once, re-checked when the guard says so
 
@@ -49,11 +49,12 @@ The repo's committed `.adversarial-audit.toml` holds a `[profile]`: what an atta
   webhook = 0
   mounts = 0
   jobs = 0
+  tools = 0
   ```
 
   Commit it, show it to the owner, and **stop for their review**: what counts as a crown jewel is the owner's judgment, not the code's. Attack after they confirm (or correct) it.
 
-- **`profile: needs re-check`**: the sweep lists why (older than 90 days, a new kind of surface, routes grew by a quarter, or a field missing). Re-check before attacking: edit the profile, never rewrite it; update `written`, `commit` and `[profile.surface]`; and show the owner the diff. Never remove or downgrade a crown jewel or a hot spot without the owner saying so.
+- **`profile: needs re-check`**: the sweep lists why (older than 90 days, a new kind of surface, routes grew by a quarter, or a field missing for a kind of surface the platform has). Re-check before attacking: edit the profile, never rewrite it; update `written`, `commit` and `[profile.surface]`; and show the owner the diff. Never remove or downgrade a crown jewel or a hot spot without the owner saying so.
 
 - **`profile: current`**: use it as it is.
 
@@ -90,7 +91,7 @@ Ask the owner first only when their words conflict ("quick but everything"), whe
 
 ## 4. Attack, one slice per attacker
 
-Batch the planned slices into rounds of at most 8 attackers. Run each round as a workflow (or as parallel background agents with the Agent tool), every attacker a **general-purpose** agent on the strongest model, never a cheaper tier. A round that stops early leaves the rest for the next run: the registry records only what was attacked.
+Batch the planned slices into rounds of at most 8 attackers. Run each round as a workflow (or as parallel background agents with the Agent tool), every attacker a **general-purpose** agent on the strongest model, never a cheaper tier. The session stays where the attackers were launched until every one reports: a subagent runs in the session's current worktree, so entering another worktree mid-round leaves each attacker refused every command against its own. A round that stops early leaves the rest for the next run: the registry records only what was attacked.
 
 The attacker prompt, filled in per slice:
 

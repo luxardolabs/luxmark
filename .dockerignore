@@ -1,5 +1,5 @@
 # Git
-.git
+**/.git
 .gitignore
 
 # Documentation (not needed in image)
@@ -14,9 +14,16 @@ Dockerfile
 compose*.yml
 .dockerignore
 
-# Environment files
-.env
-.env.*
+# Secrets, at ANY depth (a bare pattern here matches only the context root): dotenv files,
+# credentials, keys. Nothing the image serves is one of these.
+**/.env
+**/.env.*
+**/*.env
+**/*credentials.json
+**/*.pem
+**/id_rsa*
+**/id_ecdsa*
+**/id_ed25519*
 
 # OS files
 **/.DS_Store
@@ -43,6 +50,7 @@ node_modules/
 **/*.tmp
 **/*.temp
 **/test.html
+**/*.py[cod]
 **/*.pyc
 **/*.pyo
 **/__pycache__/

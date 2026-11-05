@@ -288,7 +288,7 @@ test('every file .gitignore ignores is kept out of the image\'s build context, a
   const ignored = readFileSync(join(root, '.gitignore'), 'utf8').split('\n').map((l) => l.trim())
     .filter((l) => l && !l.startsWith('#') && !l.startsWith('!') && !l.includes('/'));
   const docker = new Set(readFileSync(join(root, '.dockerignore'), 'utf8').split('\n').map((l) => l.trim()));
-  const missing = ignored.filter((p) => !docker.has(`**/${p}`) && !(p.startsWith('.env') && docker.has(p)) && p !== 'Makefile.local');
+  const missing = ignored.filter((p) => !docker.has(`**/${p}`) && p !== 'Makefile.local');
   assert.deepEqual(missing, [], 'add **/<pattern> to .dockerignore');
 });
 

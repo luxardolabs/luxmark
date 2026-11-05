@@ -1,6 +1,6 @@
 {
   "guard": "luxarch",
-  "guard_version": "0.327.0",
+  "guard_version": "0.344.0",
   "repo": "/repo",
   "targets": [
     {
@@ -152,9 +152,9 @@
         "example": ""
       },
       {
-        "rule": "repo.fleet_skills_present",
+        "rule": "repo.runtime_user_cannot_write_code",
         "status": "PASS",
-        "since": "0.245.0",
+        "since": "0.334.0",
         "violations": 0,
         "deferred": false,
         "inert": false,
@@ -163,13 +163,35 @@
         "example": ""
       },
       {
-        "rule": "repo.agent_push_declared",
+        "rule": "repo.build_context_hygiene",
         "status": "PASS",
-        "since": "0.296.0",
+        "since": "0.339.0",
         "violations": 0,
         "deferred": false,
         "inert": false,
         "inert_reason": "",
+        "fix": "",
+        "example": ""
+      },
+      {
+        "rule": "repo.fleet_skills_present",
+        "status": "INERT",
+        "since": "0.245.0",
+        "violations": 0,
+        "deferred": false,
+        "inert": true,
+        "inert_reason": "no agent-instruction file (CLAUDE.md / AGENTS.md): this repo is not set up for agents",
+        "fix": "",
+        "example": ""
+      },
+      {
+        "rule": "repo.agent_push_declared",
+        "status": "INERT",
+        "since": "0.296.0",
+        "violations": 0,
+        "deferred": false,
+        "inert": true,
+        "inert_reason": "no agent-instruction file (CLAUDE.md / AGENTS.md): no agent works in this repo",
         "fix": "",
         "example": ""
       },
@@ -351,12 +373,12 @@
       },
       {
         "rule": "repo.claude_pointer_present",
-        "status": "PASS",
+        "status": "INERT",
         "since": "0.213.0",
         "violations": 0,
         "deferred": false,
-        "inert": false,
-        "inert_reason": "",
+        "inert": true,
+        "inert_reason": "no agent-instruction file (CLAUDE.md / .claude/CLAUDE.md / AGENTS.md) \u2014 there is nothing to point AT the standard from. NOT a clearance: an agent working here has no route to the fleet conduct rules at all",
         "fix": "",
         "example": ""
       },
@@ -614,6 +636,28 @@
         "example": ""
       },
       {
+        "rule": "repo.compose_oom_ranked",
+        "status": "PASS",
+        "since": "0.343.0",
+        "violations": 0,
+        "deferred": false,
+        "inert": false,
+        "inert_reason": "",
+        "fix": "",
+        "example": ""
+      },
+      {
+        "rule": "repo.compose_restarts_after_kill",
+        "status": "PASS",
+        "since": "0.343.0",
+        "violations": 0,
+        "deferred": false,
+        "inert": false,
+        "inert_reason": "",
+        "fix": "",
+        "example": ""
+      },
+      {
         "rule": "repo.compose_up_selects_services",
         "status": "PASS",
         "since": "0.264.0",
@@ -802,20 +846,20 @@
       }
     ],
     "summary": {
-      "PASS": 55,
+      "PASS": 56,
       "FAIL": 0,
       "XFAIL": 0,
       "XPASS": 0,
-      "INERT": 13
+      "INERT": 16
     }
   },
   "summary": {
-    "PASS": 58,
+    "PASS": 59,
     "FAIL": 0,
     "XFAIL": 0,
     "XPASS": 0,
-    "INERT": 13
+    "INERT": 16
   },
-  "commit": "089b1becc9496027f3ca9906dae0ee4170aa5f38",
-  "generated_at": "2026-10-27T04:34:30Z"
+  "commit": "eb1b5940cdb26d29817351aba43c735480b1fcbb",
+  "generated_at": "2026-11-05T23:57:34Z"
 }

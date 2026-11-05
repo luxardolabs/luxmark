@@ -12,6 +12,8 @@ services:
     image: ${LUXMARK_IMAGE:-ghcr.io/luxardolabs/luxmark}:${TAG:?set TAG to the version being deployed}
     container_name: luxmark-web
     restart: unless-stopped
+    # When the host runs out of memory, the kernel kills a test or guard container (+500) first.
+    oom_score_adj: -500
     ports:
       # Loopback by default: the edge reaches the container over the docker network, so a 0.0.0.0
       # publish only let the LAN bypass it. Self-hosting on a LAN: set LUXMARK_BIND=0.0.0.0 in .env.
