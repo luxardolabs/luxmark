@@ -6,9 +6,11 @@ Writing guide: [`src/change_logs/writing-guide.md`](src/change_logs/writing-guid
 
 ## Current
 
-- **[2026.10.0](src/change_logs/2026.10.0.md)** — CSP drops script `unsafe-inline`/`unsafe-eval`; base image patched (10 HIGH CVEs); releases scanned on every platform before publishing.
+- **[2026.11.0](src/change_logs/2026.11.0.md)** — replaces the vulnerable 2026.10.0 image (8 HIGH/CRITICAL OS CVEs); the runtime user cannot write the served app; secrets are kept out of the build context at any depth; releases and deploys go through the emitted fleet blocks (`make release`, `make prod-deploy`).
 
 ## Earlier (CalVer)
+
+- **[2026.10.0](src/change_logs/2026.10.0.md)** — CSP drops script `unsafe-inline`/`unsafe-eval`; base image patched (10 HIGH CVEs); releases scanned on every platform before publishing.
 
 - **[2026.09.0](src/change_logs/2026.09.0.md)** — onboarded to the fleet guards; CDN supply chain pinned and hash-verified; rendered markdown sanitized; first test suite. Versioning moved SemVer → CalVer.
 
