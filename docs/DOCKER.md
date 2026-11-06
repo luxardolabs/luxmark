@@ -6,7 +6,7 @@ This guide covers building, running, and deploying LuxMark with Docker.
 
 ```bash
 # Run a published release with Docker Compose (compose pulls; it never builds)
-cp .env.example .env             # set TAG to the release you want, e.g. TAG=2026.10.0
+cp .env.example .env             # set TAG to the release you want, e.g. TAG=2026.11.0
 docker network create luxardolabs 2>/dev/null || true   # compose.yml joins this external network
 docker compose up -d
 
@@ -131,10 +131,10 @@ docker build --no-cache -t luxmark .
 
 ```bash
 # Move to a new release: set TAG in .env, then pull and recreate
-sed -i 's/^TAG=.*/TAG=2026.10.0/' .env
+sed -i 's/^TAG=.*/TAG=2026.11.0/' .env
 docker compose pull
 docker compose up -d --wait
 curl -s http://localhost:8080/version.json   # should report the new version
 ```
 
-Maintainers deploy the hosted site with `make prod-deploy` after `make release` (see the Makefile's Production section).
+Maintainers release with `make release`, then `make release-public`, which publishes the version and `:latest` to GHCR. They then deploy the hosted site with `make prod-deploy` (see the Makefile's Production section). Every release is a new, newest CalVer version, so `:latest` moves with each one.

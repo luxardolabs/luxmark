@@ -165,8 +165,9 @@ build-local: ## Build for local architecture only (quick, no buildx)
 # `make release` builds the candidate for both architectures into the PRIVATE registry (REGISTRY),
 # scans each platform by digest, and only then creates :$(VERSION) there. `make release-public`
 # then rescans that digest and copies it to GHCR, the registry prod and self-hosters pull from, as
-# :$(VERSION) and :latest in one step. :latest always follows the newest release; prod and the
-# README pin a version.
+# :$(VERSION) and :latest in one step. Every CalVer release is the newest, so :latest moves with
+# each one, and release-public takes no command-line variables (the input guard below), so nothing
+# can skip :latest. Prod pins a version; the README points self-hosters at :latest.
 PUBLIC_REGISTRY  := ghcr.io
 PUBLIC_LATEST    := 1
 # The notes the GitHub Release publishes: this file, never one an environment variable names.

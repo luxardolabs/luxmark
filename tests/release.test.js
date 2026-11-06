@@ -209,8 +209,30 @@ test('release-public never rolls :latest back to an older release', () => {
   assert.deepEqual(promotions(r.calls), [], r.trace);
 });
 
-test('release-public takes no variables from the command line', () => {
-  const r = release({ ...PUBLIC_OK, args: ['PUBLIC_LATEST='] });
+// Nothing skips :latest: PUBLIC_LATEST= is refused whatever the tags say, here or on origin.
+const tagged = (where) => (sb) => {
+  const git = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: sb.dir });
+  git('tag', '-a', 'v9999.12.0', '-m', 'v');
+  if (where === 'origin') git('push', '-q', 'origin', 'v9999.12.0');
+  if (where === 'origin only') { git('push', '-q', 'origin', 'v9999.12.0'); git('tag', '-d', 'v9999.12.0'); }
+};
+for (const [name, setup] of [
+  ['VERSION is the newest release', () => {}],
+  ['a newer tag exists only in this checkout', tagged('local')],
+  ['a newer tag exists here and on origin', tagged('origin')],
+  ['a newer tag exists only on origin', tagged('origin only')],
+]) {
+  for (const spelling of ['PUBLIC_LATEST=', 'PUBLIC_LATEST =', 'PUBLIC_LATEST+=']) {
+    test(`release-public ${spelling} is refused (${name}): :latest always moves`, () => {
+      const r = release({ ...PUBLIC_OK, args: [spelling], setup });
+      assert.notEqual(r.status, 0, r.out);
+      assert.deepEqual(promotions(r.calls), [], r.trace);
+    });
+  }
+}
+
+test('release-public takes no other variables from the command line', () => {
+  const r = release({ ...PUBLIC_OK, args: ['VERSION=0.0.1'] });
   assert.notEqual(r.status, 0, r.out);
   assert.deepEqual(promotions(r.calls), [], r.trace);
 });

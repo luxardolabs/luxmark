@@ -82,8 +82,9 @@ cd src && npx http-server
 ### Option 2: Docker
 
 ```bash
-# Run a released image (no clone needed); pick the version from the Releases page
-docker run -d -p 8080:8080 --name luxmark ghcr.io/luxardolabs/luxmark:2026.10.0
+# Run the newest release (no clone needed): :latest is the newest release published to GHCR.
+# To pin one, use a version from the Releases page instead, e.g. ghcr.io/luxardolabs/luxmark:2026.11.0
+docker run -d -p 8080:8080 --name luxmark ghcr.io/luxardolabs/luxmark:latest
 
 # Or build from source
 docker build -t luxmark .

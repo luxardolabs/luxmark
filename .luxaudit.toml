@@ -17,10 +17,10 @@
 # announced, because "we have no lockfile" must stay distinguishable from "the lockfile moved and
 # nobody noticed". If a requirements.txt / poetry.lock ever appears here it is scanned regardless of
 # this block: the attestation cannot switch the guard off.
-# The image that ships. The image block keeps only `candidate-<sha>` in the private registry and
-# creates `:VERSION` on GHCR from the scanned candidate's digest, so the derived
-# `<fleet registry>/luxardolabs/luxmark:VERSION` never exists. This names the image prod pulls, so
-# the image leg judges what is actually released.
+# The image that ships: the GHCR copy `make release-public` makes of the scanned `:VERSION`, which
+# is what prod and self-hosters pull. Naming it here makes the image leg judge that image, not the
+# private registry's `:VERSION` that precedes it. Until release-public runs it is not found, and the
+# leg reads N/A.
 [image]
 refs = ["ghcr.io/luxardolabs/luxmark:{version}"]
 
