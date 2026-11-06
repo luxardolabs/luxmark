@@ -1,5 +1,6 @@
-// Locks `make release` — the emitted image block (v16) as this Makefile wires it: PLATFORMS amd64 +
-// arm64, candidates in the private REGISTRY, the release in RELEASE_REGISTRY (GHCR).
+// Locks `make release` and `make release-public`: the emitted image block as this Makefile wires it.
+// PLATFORMS is amd64 + arm64; candidates and the released :VERSION live in the private REGISTRY, and
+// release-public copies a rescanned :VERSION to PUBLIC_REGISTRY (GHCR) together with :latest.
 //
 // A release tag is immutable: prod pins it. So :$(VERSION) may only be pointed at the DIGEST of a
 // candidate this run built from a provably clean, tagged tree, pushed to the private registry, and
@@ -22,18 +23,25 @@ const PRIVATE = 'reg.test/luxardolabs/luxmark';
 const GHCR = 'ghcr.io/luxardolabs/luxmark';
 
 // MANIFEST: notfound | exists | unreachable   SCAN: pass | fail   DIGEST_OUT: what the digest read returns
+// MANIFEST_EXISTS: a ref prefix that exists whatever MANIFEST says (the private :VERSION for release-public)
 // PLATS: amd64only makes the candidate's arm64 image unpullable
 const FAKE_DOCKER = `#!/bin/sh
 echo "docker $*" >> "$DOCKER_LOG"
 case "$1 $2" in
   "manifest inspect")
+    [ -n "$MANIFEST_EXISTS" ] && case "$3" in "$MANIFEST_EXISTS"*) echo '{"schemaVersion":2}'; exit 0 ;; esac
     case "$MANIFEST" in
       exists) echo '{"schemaVersion":2}'; exit 0 ;;
       unreachable) echo 'Get "https://reg/v2/": dial tcp: lookup reg: no such host' >&2; exit 1 ;;
       *) echo 'no such manifest: reg/x:1' >&2; exit 1 ;;
     esac ;;
   "buildx imagetools")
-    case "$*" in *inspect*Manifest.Digest.Encoded*) echo "\${DIGEST_OUT:-${HEX}}" ;; esac; exit 0 ;;
+    case "$*" in
+      *inspect*Manifest.Digest.Encoded*) echo "\${DIGEST_OUT:-${HEX}}" ;;
+      *inspect*Manifest.MediaType*) echo 'application/vnd.oci.image.index.v1+json' ;;
+      *inspect*Platform.OS*) echo 'linux/amd64 linux/arm64 ' ;;
+      *inspect*image.revision*) r=$(git rev-parse HEAD); echo "$r $r " ;;
+    esac; exit 0 ;;
   "buildx ls") exit 0 ;;
 esac
 if [ "$1" = pull ]; then case "$*" in *linux/arm64*) [ "$PLATS" = amd64only ] && { echo 'no matching manifest for linux/arm64' >&2; exit 1; } ;; esac; fi
@@ -120,7 +128,7 @@ const builds = (calls) => calls.filter((c) => c.startsWith('docker buildx build'
 const scans = (calls) => calls.filter((c) => c.includes('--image-archive'));
 const pushes = (calls) => calls.filter((c) => c.startsWith('docker push'));
 
-test('a clean, tagged, unreleased candidate is built once, scanned, then created on GHCR by digest', () => {
+test('a clean, tagged, unreleased candidate is built once, scanned, then created as :VERSION by digest', () => {
   const r = release();
   assert.equal(r.status, 0, r.out);
   const build = builds(r.calls);
@@ -135,7 +143,7 @@ test('a clean, tagged, unreleased candidate is built once, scanned, then created
   assert.match(build[0], / -f Dockerfile -t \S+ \.$/, 'built from THIS tree');
   assert.deepEqual(pushes(r.calls), [], 'a multi-arch release pushes only through buildx and imagetools');
   const promote = promotions(r.calls);
-  assert.deepEqual(promote, [`docker buildx imagetools create -t ${GHCR}:${VERSION} ${PRIVATE}@sha256:${HEX}`]);
+  assert.deepEqual(promote, [`docker buildx imagetools create -t ${PRIVATE}:${VERSION} ${PRIVATE}@sha256:${HEX}`]);
   const lastScan = r.calls.lastIndexOf(scans(r.calls).at(-1));
   assert.ok(lastScan >= 0 && r.calls.indexOf(promote[0]) > lastScan, `every scan must run before :VERSION is created\n${r.trace}`);
   const ghCreate = r.calls.findIndex((c) => c.startsWith('gh release create'));
@@ -156,10 +164,55 @@ test('every platform of the candidate digest is scanned, each against this repo\
   for (const c of s) assert.ok(c.includes(`-v ${r.dir}:/repo `), `scan must mount the repo, not the caller's directory:\n${c}`);
 });
 
-test('no :latest is ever created (a released version is the only public tag)', () => {
+const PUBLIC_OK = { target: 'release-public', env: { MANIFEST_EXISTS: `${PRIVATE}:` } };
+
+test('make release publishes nothing to GHCR and moves no :latest', () => {
   const r = release();
   assert.equal(r.status, 0, r.out);
-  assert.ok(!r.calls.some((c) => c.includes(':latest')), r.trace);
+  assert.deepEqual(r.calls.filter((c) => c.includes('ghcr.io') || c.includes(':latest')), [], r.trace);
+});
+
+test('release-public rescans the released digest, then creates GHCR :VERSION and :latest from it in one step', () => {
+  const r = release(PUBLIC_OK);
+  assert.equal(r.status, 0, r.out);
+  assert.equal(builds(r.calls).length, 0, 'it never builds');
+  const s = scans(r.calls);
+  assert.equal(s.length, 2, `every platform is rescanned\n${r.trace}`);
+  const promote = promotions(r.calls);
+  assert.deepEqual(promote, [`docker buildx imagetools create -t ${GHCR}:${VERSION} -t ${GHCR}:latest ${PRIVATE}@sha256:${HEX}`], r.trace);
+  assert.ok(r.calls.indexOf(promote[0]) > r.calls.lastIndexOf(s.at(-1)), `the rescan runs before the copy\n${r.trace}`);
+});
+
+test('release-public copies nothing when the rescan fails', () => {
+  const r = release({ ...PUBLIC_OK, scan: 'fail' });
+  assert.notEqual(r.status, 0, r.out);
+  assert.deepEqual(promotions(r.calls), [], r.trace);
+});
+
+test('release-public refuses a VERSION that make release has not created', () => {
+  const r = release({ target: 'release-public' });
+  assert.notEqual(r.status, 0, r.out);
+  assert.deepEqual(promotions(r.calls), [], r.trace);
+});
+
+test('release-public never rolls :latest back to an older release', () => {
+  const r = release({
+    ...PUBLIC_OK,
+    setup: (sb) => {
+      const git = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: sb.dir });
+      git('tag', '-a', 'v9999.12.0', '-m', 'v');
+      git('push', '-q', 'origin', 'v9999.12.0');
+    },
+  });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, /origin's newest is v9999\.12\.0/);
+  assert.deepEqual(promotions(r.calls), [], r.trace);
+});
+
+test('release-public takes no variables from the command line', () => {
+  const r = release({ ...PUBLIC_OK, args: ['PUBLIC_LATEST='] });
+  assert.notEqual(r.status, 0, r.out);
+  assert.deepEqual(promotions(r.calls), [], r.trace);
 });
 
 test('a failed scan never creates :VERSION', () => {

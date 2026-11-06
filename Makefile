@@ -162,10 +162,13 @@ build-local: ## Build for local architecture only (quick, no buildx)
 	@echo '$(GREEN)Build complete!$(NC)'
 
 # The release, through the emitted image block below (FLEET-BUILD-DEPLOY-STANDARD, repo.image_block_wired).
-# The candidate is built for both architectures and pushed to the PRIVATE registry (REGISTRY), each
-# platform is scanned by digest, and only then is :$(VERSION) created on GHCR, the registry prod and
-# self-hosters pull from. No :latest: a released version is the only public tag.
-RELEASE_REGISTRY := ghcr.io
+# `make release` builds the candidate for both architectures into the PRIVATE registry (REGISTRY),
+# scans each platform by digest, and only then creates :$(VERSION) there. `make release-public`
+# then rescans that digest and copies it to GHCR, the registry prod and self-hosters pull from, as
+# :$(VERSION) and :latest in one step. :latest always follows the newest release; prod and the
+# README pin a version.
+PUBLIC_REGISTRY  := ghcr.io
+PUBLIC_LATEST    := 1
 # The notes the GitHub Release publishes: this file, never one an environment variable names.
 RELEASE_NOTES    := src/release_notes/$(VERSION).md
 IMAGE_NAME       := luxardolabs/$(PROJECT_NAME)
@@ -2677,7 +2680,7 @@ githooks: ## Point git at the COMMITTED hooks (run once per clone)
 #   gate's legs only from the makefiles. The release goals need the registries set in Makefile.local,
 #   PRIVATE_REGISTRY included, so the image block holds every candidate to the private host.
 # - prod-deploy keeps its command line: `make prod-deploy MANUAL_VERSION=<v>` is the rollback.
-RELEASE_GOALS := release publish-sha dev-deploy guard-upgrade
+RELEASE_GOALS := release release-public publish-sha dev-deploy guard-upgrade
 GATE_GOALS    := check guard-version-check honest lint arch audit gitleaks status
 DEPLOY_GOALS  := prod-deploy prod-sync
 GUARDED_GOALS := $(filter $(RELEASE_GOALS) $(GATE_GOALS) $(DEPLOY_GOALS),$(MAKECMDGOALS))

@@ -48,3 +48,5 @@ The region that closes this file belongs to the repo, and no guard compares it. 
 Each step there says where it runs, by the fleet step it follows or precedes ("after step 3, before step 5: pull the product docs into `docs/product/` and commit them"), and is done as part of the release like any step above. It adds to the fleet steps and never replaces one: where the region disagrees with them, the fleet text wins. A fleet step this repo needs changed is an escalation to the guard maintainer, not a region edit.
 
 <!-- --- EDIT THIS: this repo's own release steps -->
+
+- **After step 11, before `make prod-deploy`: `make release-public`. Every release, no exceptions.** `make release` puts `:$(VERSION)` in the private registry only. `release-public` rescans that digest on every platform, then copies it to GHCR as `:$(VERSION)` **and `:latest`** in one step (`PUBLIC_LATEST := 1`). Prod and self-hosters pull from GHCR, so `make prod-deploy` refuses until this has run. Confirm it with `docker buildx imagetools inspect ghcr.io/luxardolabs/luxmark:latest`: the digest must equal `:$(VERSION)`'s. A release that leaves GHCR `:latest` on an older version is not done.
