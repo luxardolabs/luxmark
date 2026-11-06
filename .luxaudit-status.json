@@ -8,16 +8,14 @@
     "PASS": 0,
     "FAIL": 0,
     "XFAIL": 0,
-    "INERT": 2
+    "INERT": 1
   },
   "image": {
     "ref": "ghcr.io/luxardolabs/luxmark:2026.11.0",
-    "inert": true,
-    "inert_reason": "ghcr.io/luxardolabs/luxmark:2026.11.0: not in the registry, so nothing was released at this VERSION. A deploy that pins `:sha-\u2026` is not visible from the mount; name it in `[image] refs`",
+    "inert": false,
+    "inert_reason": "",
     "error": "",
-    "not_released": [
-      "ghcr.io/luxardolabs/luxmark:2026.11.0"
-    ],
+    "not_released": [],
     "vulnerable": [],
     "deferred": []
   },
@@ -26,6 +24,6 @@
     "expired": [],
     "unjudged": []
   },
-  "commit": "dcec488edbf95d033f42de39e0985260545c5df5",
-  "generated_at": "2026-11-06T00:58:22Z"
+  "commit": "7ffeeccb2f57329912e264572454a4ac754ba22e",
+  "generated_at": "2026-11-06T01:32:05Z"
 }

@@ -26,8 +26,14 @@ app  = "src"
 # No [shared] — luxmark is self-contained with no bind-mounted SSOT, so there are no placeholders to
 # overlay. Not declaring [shared] IS the "no overlay" attestation.
 #
-# No [enums] / [hypertables] / [uuid] / [observability] / [tenant] / [components] / [importlinter] —
-# all are fastapi-web concerns and inert for a static-web target.
+# No [enums] / [hypertables] / [uuid] / [tenant] / [components] / [importlinter] — all are
+# fastapi-web concerns and inert for a static-web target.
+
+# The observability overlay is opt-in for every kind, so it is either adopted or exempted with a
+# reason. luxmark has no code of its own running on the server, so it is exempt.
+[observability]
+enabled = false
+exempt_reason = "static-web: the app is static files served by stock nginx; there is no first-party server code to trace, meter or log from"
 
 # Who pushes: an agent pushes its work when it lands (owner decision 2026-10-26). Read by
 # unpushed-stop-guard and /wrap-up.
