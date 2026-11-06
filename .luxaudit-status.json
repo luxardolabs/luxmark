@@ -6,19 +6,98 @@
   "inert_reason": "static-web app: no Python anywhere. Dependencies are 16 CDN <script>/<link> tags in src/index.html, each pinned to an immutable version and SRI-verified \u2014 enforced by luxarch's static.external_deps_pinned + static.external_deps_integrity, which is the right altitude for a markup-declared supply chain.",
   "summary": {
     "PASS": 0,
-    "FAIL": 0,
+    "FAIL": 8,
     "XFAIL": 0,
-    "INERT": 2
+    "INERT": 1
   },
   "image": {
-    "ref": "luxardolabs/luxmark:2026.10.0",
-    "inert": true,
-    "inert_reason": "luxardolabs/luxmark:2026.10.0: not in the registry, so nothing was released at this VERSION. A deploy that pins `:sha-\u2026` is not visible from the mount; name it in `[image] refs`",
+    "ref": "ghcr.io/luxardolabs/luxmark:2026.10.0",
+    "inert": false,
+    "inert_reason": "",
     "error": "",
-    "not_released": [
-      "luxardolabs/luxmark:2026.10.0"
+    "not_released": [],
+    "vulnerable": [
+      {
+        "package": "brotli-libs",
+        "installed": "1.2.0-r1",
+        "vuln_id": "CVE-2026-111497",
+        "severity": "CRITICAL",
+        "layer": "os",
+        "path": "",
+        "image": "ghcr.io/luxardolabs/luxmark:2026.10.0",
+        "fix": "1.2.1-r0"
+      },
+      {
+        "package": "curl",
+        "installed": "8.22.0-r0",
+        "vuln_id": "CVE-2026-92392",
+        "severity": "HIGH",
+        "layer": "os",
+        "path": "",
+        "image": "ghcr.io/luxardolabs/luxmark:2026.10.0",
+        "fix": "8.23.0-r0"
+      },
+      {
+        "package": "libcurl",
+        "installed": "8.22.0-r0",
+        "vuln_id": "CVE-2026-92392",
+        "severity": "HIGH",
+        "layer": "os",
+        "path": "",
+        "image": "ghcr.io/luxardolabs/luxmark:2026.10.0",
+        "fix": "8.23.0-r0"
+      },
+      {
+        "package": "libexpat",
+        "installed": "2.8.5-r0",
+        "vuln_id": "CVE-2026-113351",
+        "severity": "HIGH",
+        "layer": "os",
+        "path": "",
+        "image": "ghcr.io/luxardolabs/luxmark:2026.10.0",
+        "fix": "2.10.0-r0"
+      },
+      {
+        "package": "libexpat",
+        "installed": "2.8.5-r0",
+        "vuln_id": "CVE-2026-117610",
+        "severity": "HIGH",
+        "layer": "os",
+        "path": "",
+        "image": "ghcr.io/luxardolabs/luxmark:2026.10.0",
+        "fix": "2.10.0-r0"
+      },
+      {
+        "package": "libexpat",
+        "installed": "2.8.5-r0",
+        "vuln_id": "CVE-2026-118370",
+        "severity": "HIGH",
+        "layer": "os",
+        "path": "",
+        "image": "ghcr.io/luxardolabs/luxmark:2026.10.0",
+        "fix": "2.10.0-r0"
+      },
+      {
+        "package": "libexpat",
+        "installed": "2.8.5-r0",
+        "vuln_id": "CVE-2026-77214",
+        "severity": "HIGH",
+        "layer": "os",
+        "path": "",
+        "image": "ghcr.io/luxardolabs/luxmark:2026.10.0",
+        "fix": "2.9.0-r0"
+      },
+      {
+        "package": "libx11",
+        "installed": "1.8.13-r0",
+        "vuln_id": "CVE-2026-88806",
+        "severity": "HIGH",
+        "layer": "os",
+        "path": "",
+        "image": "ghcr.io/luxardolabs/luxmark:2026.10.0",
+        "fix": "1.8.14-r0"
+      }
     ],
-    "vulnerable": [],
     "deferred": []
   },
   "ignore_rows": {
@@ -26,6 +105,6 @@
     "expired": [],
     "unjudged": []
   },
-  "commit": "eb1b5940cdb26d29817351aba43c735480b1fcbb",
-  "generated_at": "2026-11-05T23:57:34Z"
+  "commit": "18311c12e21d49dbeb90f44594bad650653cc3fb",
+  "generated_at": "2026-11-06T00:48:41Z"
 }
