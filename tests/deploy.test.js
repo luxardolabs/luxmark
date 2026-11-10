@@ -37,15 +37,16 @@ if [ -n "$LIVEJSON" ]; then printf '%s' "$LIVEJSON"; else printf '{"app":"luxmar
 `,
 };
 
-// nodeDir: the node's PROD_DIR under the sandbox (a path with a space, say).
-function run(target, { published = 'yes', live = VERSION, liveJson = '', curlFail = '', local = true, node = () => {}, args = [], fakes = {}, nodeDir = 'node' } = {}) {
+// nodeDir: the node's PROD_DIR under the sandbox (a path with a space, say). prodDirText: how
+// Makefile.local spells it, given that path (default: the path as is).
+function run(target, { published = 'yes', live = VERSION, liveJson = '', curlFail = '', local = true, node = () => {}, args = [], fakes = {}, nodeDir = 'node', prodDirText = (p) => p } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'luxmark-deploy-'));
   const prodDir = join(dir, nodeDir);
   spawnSync('mkdir', ['-p', prodDir]);
   node(prodDir);
   for (const f of ['Makefile', 'compose.yml', 'VERSION']) copyFileSync(join(root, f), join(dir, f));
   if (local) {
-    writeFileSync(join(dir, 'Makefile.local'), 'LUX_REGISTRY := reg.test\nPROD_JUMP := jump.test\nPROD_NODE := 10.0.0.9\nPROD_DIR := ' + prodDir + '\n');
+    writeFileSync(join(dir, 'Makefile.local'), 'LUX_REGISTRY := reg.test\nPROD_JUMP := jump.test\nPROD_NODE := 10.0.0.9\nPROD_DIR := ' + prodDirText(prodDir) + '\n');
   }
   const bin = join(dir, 'bin');
   const logs = join(dir, 'logs');
@@ -159,6 +160,22 @@ test('a PROD_DIR with a space is synced and deployed there, not to its first wor
     if (target === 'prod-deploy') assert.match(readFileSync(join(r.prodDir, '.env'), 'utf8'), new RegExp(`^TAG=${VERSION.replace(/\./g, '\\.')}$`, 'm'));
   }
 });
+
+test('a PROD_DIR followed by spaces and a comment in Makefile.local deploys to that directory', () => {
+  const r = run('prod-deploy', { prodDirText: (p) => `${p}   # the node's checkout` });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(readFileSync(join(r.prodDir, 'compose.yml'), 'utf8'), readFileSync(join(root, 'compose.yml'), 'utf8'));
+  assert.deepEqual(readdirSync(r.dir).filter((f) => f.startsWith('node') && f !== 'node'), [], r.out);
+});
+
+for (const text of ['~/luxmark', 'luxmark']) {
+  test(`a PROD_DIR that is not an absolute path (${text}) is refused before the node is touched`, () => {
+    const r = run('prod-deploy', { prodDirText: () => text });
+    assert.notEqual(r.status, 0, r.out);
+    assert.match(r.out, /PROD_DIR .* not an absolute path/);
+    assert.equal(sshCalls(r.calls).length, 0, r.trace);
+  });
+}
 
 test('the prod targets refuse to run without the node topology in Makefile.local', () => {
   const r = run('prod-deploy', { local: false });

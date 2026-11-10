@@ -2084,8 +2084,13 @@ PROD_WAIT    ?= 90
 # first. make can be told to ignore a failed recipe line (`.IGNORE` in a makefile, -i, -k), and then
 # runs the next line; within one line a failure ends the shell, so a refusal can never be stepped past
 # into the steps after it. Nothing here calls `$(MAKE)`, for the same reason.
+# PROD_DIR is quoted on the node, so it is taken without the spaces make keeps before a trailing
+# comment, and only as an absolute path: inside quotes `~` does not expand, and a relative path would
+# land wherever the node's ssh session starts.
+override PROD_DIR := $(strip $(PROD_DIR))
 PROD_REQUIRE_SH = if [ -z "$(PROD_JUMP)" ] || [ -z "$(PROD_NODE)" ] || [ -z "$(PROD_DIR)" ]; then \
-  echo '$(RED)PROD_JUMP / PROD_NODE / PROD_DIR unset: set them in Makefile.local (see Makefile.local.example).$(NC)'; exit 1; fi
+  echo '$(RED)PROD_JUMP / PROD_NODE / PROD_DIR unset: set them in Makefile.local (see Makefile.local.example).$(NC)'; exit 1; fi; \
+  case "$(PROD_DIR)" in (/*) ;; (*) echo '$(RED)REFUSING: PROD_DIR "$(PROD_DIR)" is not an absolute path: write it out from / in Makefile.local.$(NC)'; exit 1 ;; esac
 # One command per remote script line, so the node's `set -e` stops on any failure (in an `a && b` list
 # it does not). The payload is checksummed against the local file BEFORE it replaces anything, and a
 # stray compose.yaml is moved to a timestamped name (`mv -n`), so no earlier copy is ever overwritten.
