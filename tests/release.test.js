@@ -305,6 +305,21 @@ for (const args of [['VERSION=0.0.1'], ['PUBLIC_RESUME=1', 'VERSION=0.0.1'], ['P
   });
 }
 
+for (const arg of ['PUBLIC_REGISTRY=', 'RELEASE_NOTES=Dockerfile']) {
+  test(`make gh-release ${arg} is refused: the Release takes its registry and notes only from the makefiles`, () => {
+    const r = release({ target: 'gh-release', args: [arg], env: { MANIFEST_EXISTS: `${GHCR}:` } });
+    assert.notEqual(r.status, 0, r.out);
+    assert.match(r.out, /takes no variables from the command line/);
+    assert.ok(!r.calls.some((c) => c.startsWith('gh release create')), r.trace);
+  });
+}
+
+test('make gh-release publishes no Release while GHCR has no :VERSION', () => {
+  const r = release({ target: 'gh-release' });
+  assert.notEqual(r.status, 0, r.out);
+  assert.ok(!r.calls.some((c) => c.startsWith('gh release create')), r.trace);
+});
+
 test('PUBLIC_RESUME=1 in an exported MAKEFLAGS is refused: it is this make\'s own command line or nothing', () => {
   const r = release({ ...PUBLIC_OK, manifest: 'exists', env: { ...PUBLIC_OK.env, MAKEFLAGS: 'PUBLIC_RESUME=1' } });
   assert.notEqual(r.status, 0, r.out);

@@ -3172,7 +3172,7 @@ githooks: ## Point git at the COMMITTED hooks (run once per clone)
 #   resumes a public copy that stopped before :latest, and the image block takes it only from this
 #   make's own command line and only as 1. It changes no input: the copy is still of the released digest.
 # - prod-deploy keeps its command line: `make prod-deploy MANUAL_VERSION=<v>` is the rollback.
-RELEASE_GOALS := release release-public publish-sha dev-deploy guard-upgrade
+RELEASE_GOALS := release release-public gh-release publish-sha dev-deploy guard-upgrade
 GATE_GOALS    := check guard-version-check honest lint arch audit gitleaks status
 DEPLOY_GOALS  := prod-deploy prod-sync
 GUARDED_GOALS := $(filter $(RELEASE_GOALS) $(GATE_GOALS) $(DEPLOY_GOALS),$(MAKECMDGOALS))
