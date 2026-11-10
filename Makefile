@@ -1,6 +1,10 @@
 # Makefile for LuxMark
 # Automatically detects version from directory structure
 
+# make's flags as the command line and the environment set them, before any makefile is read: the
+# release lock below refuses a run whose flags a makefile (Makefile.local) then changed.
+mk_start := $(MAKEFLAGS)
+
 # Color definitions
 GREEN := \033[0;32m
 YELLOW := \033[0;33m
@@ -3168,8 +3172,10 @@ githooks: ## Point git at the COMMITTED hooks (run once per clone)
 #   stopped before :latest, then a gh-release that publishes over it.
 # - A release takes VERSION from the VERSION file: a MANUAL_VERSION from anywhere (the shell, the
 #   command line, Makefile.local) is refused.
-# - A flag counts wherever it was set: on the command line, in an exported MAKEFLAGS, or in a
-#   `MAKEFLAGS += -k` in Makefile.local, which GNU make 4.3 still spells as a dashed word here.
+# - Make's flags come from the command line or the environment, where make writes them into
+#   MAKEFLAGS' leading word. A makefile that changes MAKEFLAGS (`MAKEFLAGS += -k` in Makefile.local)
+#   is refused outright: GNU make 4.3 keeps such text as written, in clusters and abbreviations
+#   (`-kj4`, `--kee`) that no reading of the word can be trusted to catch.
 # - A release, a guard run and the gate take every input from the makefiles: no variable from the
 #   command line (or MAKEFLAGS), which would override any `:=` here; no `-e`; the registries and the
 #   gate's legs only from the makefiles. The release goals need the registries set in Makefile.local,
@@ -3185,16 +3191,13 @@ GUARDED_GOALS := $(filter $(RELEASE_GOALS) $(GATE_GOALS) $(DEPLOY_GOALS),$(MAKEC
 INPUT_GOALS   := $(filter $(RELEASE_GOALS) $(GATE_GOALS),$(MAKECMDGOALS))
 INPUT_OVERRIDES := $(if $(filter release-public,$(MAKECMDGOALS)),$(if $(filter-out release-public,$(MAKECMDGOALS)),$(MAKEOVERRIDES),$(filter-out PUBLIC_RESUME=1,$(MAKEOVERRIDES))),$(MAKEOVERRIDES))
 # A dry run (`make -n`, how luxarch reads this makefile) runs no recipe line, and every $(MAKE) in one
-# inherits -n, so it is exempt; no recipe here carries a `+` that would run under -n. The exemption
-# reads only make's own leading flag word, so a `-n` written into a makefile never switches the lock off.
-# mk_flags is that word's letters, plus each dashed cluster of make's argument-free short flags
-# (`-k`, `-sk`; not `-Otarget` or `-j4`), plus k, i and e for their long spellings.
-mk_dry   := $(filter-out -%,$(firstword $(MAKEFLAGS)))
-mk_strip  = $(subst B,,$(subst d,,$(subst e,,$(subst i,,$(subst k,,$(subst n,,$(subst p,,$(subst q,,$(subst r,,$(subst R,,$(subst s,,$(subst S,,$(subst t,,$(subst w,,$(1)))))))))))))))
-mk_flags := $(mk_dry) $(foreach w,$(patsubst -%,%,$(filter-out --%,$(filter -%,$(MAKEFLAGS)))),$(if $(call mk_strip,$(w)),,$(w))) \
-  $(if $(filter --keep%,$(MAKEFLAGS)),k) $(if $(filter --ig%,$(MAKEFLAGS)),i) $(if $(filter --en%,$(MAKEFLAGS)),e)
-ifeq ($(findstring n,$(mk_dry)),)
+# inherits -n, so it is exempt; no recipe here carries a `+` that would run under -n.
+mk_flags := $(filter-out -%,$(firstword $(MAKEFLAGS)))
+ifeq ($(findstring n,$(mk_flags)),)
 ifneq ($(GUARDED_GOALS),)
+ifneq ($(mk_start),$(MAKEFLAGS))
+$(error REFUSING: a makefile changes make's flags (MAKEFLAGS was "$(mk_start)" before Makefile.local and is "$(MAKEFLAGS)" here), so $(GUARDED_GOALS) cannot tell which flags it runs under: remove the MAKEFLAGS line from Makefile.local and pass flags on the command line)
+endif
 $(if $(findstring i,$(mk_flags)),$(error REFUSING: make -i ignores every failure, so $(GUARDED_GOALS) could not fail: run it without -i))
 endif
 ifneq ($(INPUT_GOALS),)

@@ -347,30 +347,50 @@ for (const target of ['gh-release', 'release', 'release-public']) {
   });
 }
 
-// A make flag written into Makefile.local (`MAKEFLAGS += -k`) is in effect for the run but, on GNU
-// make 4.3, still spelled as a dashed word when the lock reads MAKEFLAGS.
+// A flag written into Makefile.local is in effect for the run, but GNU make 4.3 keeps it as written
+// (`-kj4`, `--kee`), so the lock refuses any change a makefile makes to MAKEFLAGS.
 const LOCAL = `LUX_REGISTRY := reg.test\nREGISTRY     := reg.test\nPRIVATE_REGISTRY := reg.test\n`;
-for (const [flag, target, refusal] of [
-  ['-k', 'release-public', /make -k carries on/],
-  ['--keep-going', 'release-public', /make -k carries on/],
-  ['-sk', 'release-public', /make -k carries on/],
-  ['-i', 'release', /make -i ignores every failure/],
-  ['--ignore-errors', 'release', /make -i ignores every failure/],
-  ['-e', 'release', /make -e lets the environment override/],
-  ['--environment-overrides', 'release', /make -e lets the environment override/],
+const CHANGED_FLAGS = /a makefile changes make's flags/;
+for (const [line, target] of [
+  ['MAKEFLAGS += -k', 'release-public'],
+  ['MAKEFLAGS += --keep-going', 'release-public'],
+  ['MAKEFLAGS += --kee', 'release-public'],
+  ['MAKEFLAGS += -sk', 'release-public'],
+  ['MAKEFLAGS += -kj4', 'release-public'],
+  ['MAKEFLAGS += -kL', 'release-public'],
+  ['MAKEFLAGS += -kOtarget', 'release-public'],
+  ['MAKEFLAGS := -k', 'release-public'],
+  ['override MAKEFLAGS += -k', 'release-public'],
+  ['MAKEFLAGS += -i', 'release'],
+  ['MAKEFLAGS += -ij4', 'release'],
+  ['MAKEFLAGS += --ignore-errors', 'release'],
+  ['MAKEFLAGS += -e', 'release'],
+  ['MAKEFLAGS += -s', 'release'],
+  ['MAKEFLAGS += -j2', 'gh-release'],
 ]) {
-  test(`MAKEFLAGS += ${flag} in Makefile.local is refused for make ${target}`, () => {
-    const r = release({ ...PUBLIC_OK, target, local: `${LOCAL}MAKEFLAGS += ${flag}\n` });
+  test(`${line} in Makefile.local is refused for make ${target}`, () => {
+    const r = release({ ...PUBLIC_OK, target, local: `${LOCAL}${line}\n` });
     assert.notEqual(r.status, 0, r.out);
-    assert.match(r.out, refusal);
+    assert.match(r.out, CHANGED_FLAGS);
     assert.deepEqual(anyPush(r.calls), [], r.trace);
     assert.ok(!r.calls.some((c) => c.startsWith('gh release create')), r.trace);
   });
 }
 
-for (const flag of ['-s', '-j2', '--no-print-directory']) {
-  test(`MAKEFLAGS += ${flag} in Makefile.local still releases`, () => {
-    const r = release({ local: `${LOCAL}MAKEFLAGS += ${flag}\n` });
+test('MAKEFLAGS += -ij4 in Makefile.local: prod-deploy of an unpublished VERSION sends nothing to the node', () => {
+  const r = release({ target: 'prod-deploy', local: `${PROD_LOCAL}MAKEFLAGS += -ij4\n`, setup: fakeRemote });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, CHANGED_FLAGS);
+  assert.deepEqual(r.calls.filter((c) => c.startsWith('ssh')), [], r.trace);
+});
+
+for (const [name, opts] of [
+  ['make -s -j2 --no-print-directory release', { args: ['-s', '-j2', '--no-print-directory'] }],
+  ['a parent make\'s MAKEFLAGS=w', { env: { MAKEFLAGS: 'w', MAKELEVEL: '1' } }],
+  ['MAKEFLAGS=s in the environment', { env: { MAKEFLAGS: 's' } }],
+]) {
+  test(`flags from the command line or the environment still release (${name})`, () => {
+    const r = release(opts);
     assert.equal(r.status, 0, r.out);
     assert.equal(promotions(r.calls).length, 1, r.trace);
   });
