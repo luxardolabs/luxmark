@@ -1,6 +1,6 @@
 {
   "guard": "luxlint",
-  "guard_version": "0.74.0",
+  "guard_version": "0.77.0",
   "repo": "/repo",
   "source": [
     "src/js"
@@ -203,6 +203,6 @@
     "INERT": 4
   },
   "mypy": "separate: `luxlint --mypy` ([mypy].baseline ratchet)",
-  "commit": "679b3dbc84cf87b3819f872c42d5138351df7f1b",
-  "generated_at": "2026-11-06T02:48:34Z"
+  "commit": "066cbc67e410a3d2a9a37b4b59c1a5686563cf7c",
+  "generated_at": "2026-11-10T02:00:55Z"
 }

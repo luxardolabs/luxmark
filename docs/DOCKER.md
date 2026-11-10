@@ -137,4 +137,4 @@ docker compose up -d --wait
 curl -s http://localhost:8080/version.json   # should report the new version
 ```
 
-Maintainers release with `make release`, then `make release-public`, which publishes the version and `:latest` to GHCR. They then deploy the hosted site with `make prod-deploy` (see the Makefile's Production section). Every release is a new, newest CalVer version, so `:latest` moves with each one.
+Maintainers release with `make release`, then `make release-public`, which publishes the version and `:latest` to GHCR and then the GitHub Release, so a Release never names a version you cannot pull. They then deploy the hosted site with `make prod-deploy` (see the Makefile's Production section). Every release is a new, newest CalVer version, so `:latest` moves with each one.

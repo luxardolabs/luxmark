@@ -1,6 +1,6 @@
 {
   "guard": "luxarch",
-  "guard_version": "0.344.0",
+  "guard_version": "0.358.0",
   "repo": "/repo",
   "targets": [
     {
@@ -449,6 +449,17 @@
         "example": ""
       },
       {
+        "rule": "repo.ops_scripts_in_runbook",
+        "status": "INERT",
+        "since": "0.358.0",
+        "violations": 0,
+        "deferred": false,
+        "inert": true,
+        "inert_reason": "no `scripts/ops/` directory beside any app package, so there is no one-off operator script to judge (a script kept elsewhere is not seen: its home is `<component>/scripts/ops/`)",
+        "fix": "",
+        "example": ""
+      },
+      {
         "rule": "repo.github_release_wired",
         "status": "PASS",
         "since": "0.150.0",
@@ -658,6 +669,17 @@
         "example": ""
       },
       {
+        "rule": "repo.compose_pg_healthcheck_tcp",
+        "status": "INERT",
+        "since": "0.358.0",
+        "violations": 0,
+        "deferred": false,
+        "inert": true,
+        "inert_reason": "no committed compose service carries a healthcheck that probes Postgres \u2014 nothing to check",
+        "fix": "",
+        "example": ""
+      },
+      {
         "rule": "repo.compose_up_selects_services",
         "status": "PASS",
         "since": "0.264.0",
@@ -850,7 +872,7 @@
       "FAIL": 0,
       "XFAIL": 0,
       "XPASS": 0,
-      "INERT": 16
+      "INERT": 18
     }
   },
   "summary": {
@@ -858,8 +880,8 @@
     "FAIL": 0,
     "XFAIL": 0,
     "XPASS": 0,
-    "INERT": 16
+    "INERT": 18
   },
-  "commit": "679b3dbc84cf87b3819f872c42d5138351df7f1b",
-  "generated_at": "2026-11-06T02:48:34Z"
+  "commit": "066cbc67e410a3d2a9a37b4b59c1a5686563cf7c",
+  "generated_at": "2026-11-10T02:00:55Z"
 }

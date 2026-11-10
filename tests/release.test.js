@@ -1,6 +1,7 @@
 // Locks `make release` and `make release-public`: the emitted image block as this Makefile wires it.
 // PLATFORMS is amd64 + arm64; candidates and the released :VERSION live in the private REGISTRY, and
-// release-public copies a rescanned :VERSION to PUBLIC_REGISTRY (GHCR) together with :latest.
+// release-public copies a rescanned :VERSION to PUBLIC_REGISTRY (GHCR) together with :latest, then
+// publishes the GitHub Release, so the Release never names a version users cannot pull.
 //
 // A release tag is immutable: prod pins it. So :$(VERSION) may only be pointed at the DIGEST of a
 // candidate this run built from a provably clean, tagged tree, pushed to the private registry, and
@@ -50,12 +51,21 @@ if [ "$1" = run ]; then case "$*" in *--image-archive*) [ "$SCAN" = fail ] && ex
 exit 0
 `;
 
-// gh: authenticated (GH_AUTH=fail: not), no Release exists yet (GH_EXISTS=yes: one does), `release create` succeeds.
+// gh: the GitHub CLI (GH_STANDIN=yes: a stand-in whose --version prints nothing), authenticated
+// (GH_AUTH=fail: not), no Release exists yet (GH_EXISTS=yes: a published one does; GH_EXISTS=draft: a
+// draft does). `release create` succeeds, and `release view` then shows the Release unless GH_GHOST=yes.
 const FAKE_GH = `#!/bin/sh
 echo "gh $*" >> "$DOCKER_LOG"
+created="$(dirname "$DOCKER_LOG")/gh-created"
+if [ "$1" = --version ]; then [ "$GH_STANDIN" = yes ] || echo 'gh version 2.63.0 (2024-11-27)'; exit 0; fi
 case "$1 $2" in
   "auth status") [ "$GH_AUTH" = fail ] && exit 1 ;;
-  "release view") [ "$GH_EXISTS" = yes ] || exit 1 ;;
+  "release view")
+    [ "$3" = --help ] && { echo '  -q, --jq expression   Filter JSON output'; echo '      --json fields     Output JSON'; exit 0; }
+    if [ "$GH_EXISTS" = draft ]; then echo "$3 true"; exit 0; fi
+    if [ "$GH_EXISTS" = yes ] || { [ -f "$created" ] && [ "$GH_GHOST" != yes ]; }; then echo "$3 false"; exit 0; fi
+    exit 1 ;;
+  "release create") : > "$created"; exit 0 ;;
 esac
 if [ "$1" = images ] && [ -n "$LOCAL_TAGS" ]; then echo "$LOCAL_TAGS"; exit 0; fi
 if [ "$1" = run ] && [ -n "$GUARD_FAIL" ]; then exit 1; fi
@@ -146,9 +156,20 @@ test('a clean, tagged, unreleased candidate is built once, scanned, then created
   assert.deepEqual(promote, [`docker buildx imagetools create -t ${PRIVATE}:${VERSION} ${PRIVATE}@sha256:${HEX}`]);
   const lastScan = r.calls.lastIndexOf(scans(r.calls).at(-1));
   assert.ok(lastScan >= 0 && r.calls.indexOf(promote[0]) > lastScan, `every scan must run before :VERSION is created\n${r.trace}`);
-  const ghCreate = r.calls.findIndex((c) => c.startsWith('gh release create'));
-  assert.ok(ghCreate > r.calls.indexOf(promote[0]), `the GitHub Release follows the image\n${r.trace}`);
-  assert.match(r.calls[ghCreate], new RegExp(`--notes-file src/release_notes/${VERSION}\\.md`));
+});
+
+test('make release publishes no GitHub Release: users pull from GHCR, so the Release follows release-public', () => {
+  const r = release();
+  assert.equal(r.status, 0, r.out);
+  assert.ok(!r.calls.some((c) => c.startsWith('gh release create')), r.trace);
+});
+
+test('release refuses a VERSION already on GHCR: a public version is never re-cut with a new digest', () => {
+  const r = release({ env: { MANIFEST_EXISTS: `${GHCR}:` } });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, new RegExp(`${GHCR}:${VERSION}`));
+  assert.equal(builds(r.calls).length, 0, r.trace);
+  assert.equal(promotions(r.calls).length, 0, r.trace);
 });
 
 test('every platform of the candidate digest is scanned, each against this repo\'s .luxaudit.toml', () => {
@@ -166,10 +187,11 @@ test('every platform of the candidate digest is scanned, each against this repo\
 
 const PUBLIC_OK = { target: 'release-public', env: { MANIFEST_EXISTS: `${PRIVATE}:` } };
 
-test('make release publishes nothing to GHCR and moves no :latest', () => {
+test('make release writes nothing to GHCR and moves no :latest (it only reads GHCR, to refuse a public VERSION)', () => {
   const r = release();
   assert.equal(r.status, 0, r.out);
-  assert.deepEqual(r.calls.filter((c) => c.includes('ghcr.io') || c.includes(':latest')), [], r.trace);
+  const reads = (c) => c.startsWith('docker manifest inspect ');
+  assert.deepEqual(r.calls.filter((c) => !reads(c) && (c.includes('ghcr.io') || c.includes(':latest'))), [], r.trace);
 });
 
 test('release-public rescans the released digest, then creates GHCR :VERSION and :latest from it in one step', () => {
@@ -179,8 +201,52 @@ test('release-public rescans the released digest, then creates GHCR :VERSION and
   const s = scans(r.calls);
   assert.equal(s.length, 2, `every platform is rescanned\n${r.trace}`);
   const promote = promotions(r.calls);
-  assert.deepEqual(promote, [`docker buildx imagetools create -t ${GHCR}:${VERSION} -t ${GHCR}:latest ${PRIVATE}@sha256:${HEX}`], r.trace);
+  // --prefer-index=false: a carbon copy, so the public :VERSION keeps the released digest.
+  assert.deepEqual(promote, [`docker buildx imagetools create --prefer-index=false -t ${GHCR}:${VERSION} -t ${GHCR}:latest ${PRIVATE}@sha256:${HEX}`], r.trace);
   assert.ok(r.calls.indexOf(promote[0]) > r.calls.lastIndexOf(s.at(-1)), `the rescan runs before the copy\n${r.trace}`);
+  const ghCreate = r.calls.findIndex((c) => c.startsWith('gh release create'));
+  assert.ok(ghCreate > r.calls.indexOf(promote[0]), `the GitHub Release follows the public copy\n${r.trace}`);
+  assert.match(r.calls[ghCreate], new RegExp(`--notes-file src/release_notes/${VERSION}\\.md`));
+});
+
+test('release-public refuses a VERSION already on GHCR unless PUBLIC_RESUME=1 is on the command line', () => {
+  const r = release({ ...PUBLIC_OK, manifest: 'exists' });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, /already PUBLISHED/);
+  assert.deepEqual(promotions(r.calls), [], r.trace);
+});
+
+test('release-public PUBLIC_RESUME=1 moves :latest after a copy that wrote only :VERSION', () => {
+  const r = release({ ...PUBLIC_OK, manifest: 'exists', args: ['PUBLIC_RESUME=1'] });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(promotions(r.calls).filter((c) => c.includes(`${GHCR}:latest`)).length, 1, r.trace);
+  assert.ok(!promotions(r.calls).some((c) => c.includes(`-t ${GHCR}:${VERSION} `)), `:VERSION is not copied again\n${r.trace}`);
+});
+
+test('PUBLIC_RESUME from the environment is refused: resuming is one run\'s choice on the command line', () => {
+  const r = release({ ...PUBLIC_OK, manifest: 'exists', env: { ...PUBLIC_OK.env, PUBLIC_RESUME: '1' } });
+  assert.notEqual(r.status, 0, r.out);
+  assert.deepEqual(promotions(r.calls), [], r.trace);
+});
+
+test('a draft GitHub Release is refused, never reported as published', () => {
+  const r = release({ ...PUBLIC_OK, env: { ...PUBLIC_OK.env, GH_EXISTS: 'draft' } });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, /is a draft/);
+  assert.ok(!r.calls.some((c) => c.startsWith('gh release create')), r.trace);
+});
+
+test('a gh release create that exits 0 but leaves no Release fails the release', () => {
+  const r = release({ ...PUBLIC_OK, env: { ...PUBLIC_OK.env, GH_GHOST: 'yes' } });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, /does not show the Release/);
+});
+
+test('a gh that is not the GitHub CLI is refused before anything is built', () => {
+  const r = release({ env: { GH_STANDIN: 'yes' } });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, /is not the GitHub CLI/);
+  assert.equal(builds(r.calls).length, 0, r.trace);
 });
 
 test('release-public copies nothing when the rescan fails', () => {
@@ -231,10 +297,25 @@ for (const [name, setup] of [
   }
 }
 
-test('release-public takes no other variables from the command line', () => {
-  const r = release({ ...PUBLIC_OK, args: ['VERSION=0.0.1'] });
+for (const args of [['VERSION=0.0.1'], ['PUBLIC_RESUME=1', 'VERSION=0.0.1'], ['PUBLIC_RESUME=2'], ['PUBLIC_RESUME:=1']]) {
+  test(`release-public takes no other variables from the command line (${args.join(' ')})`, () => {
+    const r = release({ ...PUBLIC_OK, manifest: 'exists', args });
+    assert.notEqual(r.status, 0, r.out);
+    assert.deepEqual(promotions(r.calls), [], r.trace);
+  });
+}
+
+test('PUBLIC_RESUME=1 in an exported MAKEFLAGS is refused: it is this make\'s own command line or nothing', () => {
+  const r = release({ ...PUBLIC_OK, manifest: 'exists', env: { ...PUBLIC_OK.env, MAKEFLAGS: 'PUBLIC_RESUME=1' } });
   assert.notEqual(r.status, 0, r.out);
   assert.deepEqual(promotions(r.calls), [], r.trace);
+});
+
+test('PUBLIC_RESUME=1 is refused beside any goal but release-public', () => {
+  const r = release({ args: ['PUBLIC_RESUME=1'] });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, /takes no variables from the command line/);
+  assert.equal(anyPush(r.calls).length, 0, r.trace);
 });
 
 test('a failed scan never creates :VERSION', () => {
@@ -352,7 +433,7 @@ test('an unreadable candidate digest is refused: nothing is pulled, scanned or p
 });
 
 test('an existing GitHub Release is left as it is (a Release, like its tag, is immutable)', () => {
-  const r = release({ env: { GH_EXISTS: 'yes' } });
+  const r = release({ ...PUBLIC_OK, env: { ...PUBLIC_OK.env, GH_EXISTS: 'yes' } });
   assert.equal(r.status, 0, r.out);
   assert.ok(!r.calls.some((c) => c.startsWith('gh release create')), r.trace);
 });
@@ -506,7 +587,7 @@ test('on a clean clone, LUX_REGISTRY from the environment cannot choose the guar
 });
 
 test('the release publishes its own notes, never a file the environment names', () => {
-  const r = release({ env: { RELEASE_NOTES: 'Dockerfile' } });
+  const r = release({ ...PUBLIC_OK, env: { ...PUBLIC_OK.env, RELEASE_NOTES: 'Dockerfile' } });
   assert.equal(r.status, 0, r.out);
   const create = r.calls.filter((c) => c.startsWith('gh release create'));
   assert.equal(create.length, 1, r.trace);
