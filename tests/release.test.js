@@ -133,6 +133,16 @@ function release({ manifest = 'notfound', scan = 'pass', plats = 'both', tag = t
   return { ...sb, status: r.status, out: r.stdout + r.stderr, calls, trace: calls.join('\n') };
 }
 
+// An older release, tagged on origin with its own notes: the version a stale MANUAL_VERSION would name.
+function olderRelease(sb) {
+  const git = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: sb.dir });
+  writeFileSync(join(sb.dir, 'src', 'release_notes', '2026.10.0.md'), '# 2026.10.0\n');
+  git('add', '-A');
+  git('commit', '-qm', 'older notes');
+  git('tag', '-a', 'v2026.10.0', '-m', 'v');
+  git('push', '-q', 'origin', 'v2026.10.0');
+}
+
 const promotions = (calls) => calls.filter((c) => c.startsWith('docker buildx imagetools create'));
 const builds = (calls) => calls.filter((c) => c.startsWith('docker buildx build') || c.startsWith('docker build '));
 const scans = (calls) => calls.filter((c) => c.includes('--image-archive'));
@@ -330,19 +340,48 @@ for (const [name, opts] of [
 
 for (const target of ['gh-release', 'release', 'release-public']) {
   test(`MANUAL_VERSION from the environment is refused for make ${target}: VERSION is the VERSION file`, () => {
-    // An older release, tagged on origin with its own notes: the version a stale shell would name.
-    const older = (sb) => {
-      const git = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: sb.dir });
-      writeFileSync(join(sb.dir, 'src', 'release_notes', '2026.10.0.md'), '# 2026.10.0\n');
-      git('add', '-A');
-      git('commit', '-qm', 'older notes');
-      git('tag', '-a', 'v2026.10.0', '-m', 'v');
-      git('push', '-q', 'origin', 'v2026.10.0');
-    };
-    const r = release({ target, setup: older, env: { MANIFEST_EXISTS: `${GHCR}:`, MANUAL_VERSION: '2026.10.0' } });
+    const r = release({ target, setup: olderRelease, env: { MANIFEST_EXISTS: `${GHCR}:`, MANUAL_VERSION: '2026.10.0' } });
     assert.notEqual(r.status, 0, r.out);
     assert.ok(!r.calls.some((c) => c.startsWith('gh release create')), r.trace);
     assert.deepEqual(anyPush(r.calls), [], r.trace);
+  });
+}
+
+// A make flag written into Makefile.local (`MAKEFLAGS += -k`) is in effect for the run but, on GNU
+// make 4.3, still spelled as a dashed word when the lock reads MAKEFLAGS.
+const LOCAL = `LUX_REGISTRY := reg.test\nREGISTRY     := reg.test\nPRIVATE_REGISTRY := reg.test\n`;
+for (const [flag, target, refusal] of [
+  ['-k', 'release-public', /make -k carries on/],
+  ['--keep-going', 'release-public', /make -k carries on/],
+  ['-sk', 'release-public', /make -k carries on/],
+  ['-i', 'release', /make -i ignores every failure/],
+  ['--ignore-errors', 'release', /make -i ignores every failure/],
+  ['-e', 'release', /make -e lets the environment override/],
+  ['--environment-overrides', 'release', /make -e lets the environment override/],
+]) {
+  test(`MAKEFLAGS += ${flag} in Makefile.local is refused for make ${target}`, () => {
+    const r = release({ ...PUBLIC_OK, target, local: `${LOCAL}MAKEFLAGS += ${flag}\n` });
+    assert.notEqual(r.status, 0, r.out);
+    assert.match(r.out, refusal);
+    assert.deepEqual(anyPush(r.calls), [], r.trace);
+    assert.ok(!r.calls.some((c) => c.startsWith('gh release create')), r.trace);
+  });
+}
+
+for (const flag of ['-s', '-j2', '--no-print-directory']) {
+  test(`MAKEFLAGS += ${flag} in Makefile.local still releases`, () => {
+    const r = release({ local: `${LOCAL}MAKEFLAGS += ${flag}\n` });
+    assert.equal(r.status, 0, r.out);
+    assert.equal(promotions(r.calls).length, 1, r.trace);
+  });
+}
+
+for (const spelling of ['MANUAL_VERSION := 2026.10.0', 'override MANUAL_VERSION := 2026.10.0', 'export MANUAL_VERSION := 2026.10.0']) {
+  test(`${spelling} in Makefile.local is refused for make gh-release: VERSION is the VERSION file`, () => {
+    const r = release({ target: 'gh-release', setup: olderRelease, local: `${LOCAL}${spelling}\n`, env: { MANIFEST_EXISTS: `${GHCR}:` } });
+    assert.notEqual(r.status, 0, r.out);
+    assert.match(r.out, /MANUAL_VERSION comes from/);
+    assert.ok(!r.calls.some((c) => c.startsWith('gh release create')), r.trace);
   });
 }
 
@@ -648,6 +687,19 @@ const fakeRemote = ({ parent }) => {
     chmodSync(join(parent, n), 0o755);
   }
 };
+test('make prod-deploy MANUAL_VERSION=<older> is the rollback: it pins the node to that version', () => {
+  const ROLLBACK = '2026.10.0';
+  const live = ({ parent, dir }) => {
+    writeFileSync(join(dir, 'compose.yml'), 'services: {}\n');
+    writeFileSync(join(parent, 'ssh'), '#!/bin/sh\necho "ssh $*" >> "$DOCKER_LOG"\ncat >> "$DOCKER_LOG"\n');
+    writeFileSync(join(parent, 'curl'), `#!/bin/sh\necho "curl $*" >> "$DOCKER_LOG"\necho '{"version":"${ROLLBACK}","commit":"abc1234"}'\n`);
+    for (const n of ['ssh', 'curl']) chmodSync(join(parent, n), 0o755);
+  };
+  const r = release({ target: 'prod-deploy', args: [`MANUAL_VERSION=${ROLLBACK}`], local: PROD_LOCAL, setup: live, env: { MANIFEST_EXISTS: `${GHCR}:${ROLLBACK}` } });
+  assert.equal(r.status, 0, r.out);
+  assert.ok(r.calls.some((c) => c.includes(`"TAG=%s\\n" "${ROLLBACK}"`)), r.trace);
+});
+
 for (const args of [[], ['-i']]) {
   test(`make ${args.join(' ')} prod-deploy of an unpublished VERSION sends nothing to the node`.replace('  ', ' '), () => {
     const r = release({ target: 'prod-deploy', args, local: PROD_LOCAL, setup: fakeRemote });

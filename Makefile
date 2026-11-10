@@ -3166,7 +3166,10 @@ githooks: ## Point git at the COMMITTED hooks (run once per clone)
 #   which `-i` would step past and pin the node to a tag it cannot pull.
 # - No release goal runs under `-k`, which carries on into the next goal after one fails: a copy that
 #   stopped before :latest, then a gh-release that publishes over it.
-# - A release takes VERSION from the VERSION file: a MANUAL_VERSION left in the shell is refused.
+# - A release takes VERSION from the VERSION file: a MANUAL_VERSION from anywhere (the shell, the
+#   command line, Makefile.local) is refused.
+# - A flag counts wherever it was set: on the command line, in an exported MAKEFLAGS, or in a
+#   `MAKEFLAGS += -k` in Makefile.local, which GNU make 4.3 still spells as a dashed word here.
 # - A release, a guard run and the gate take every input from the makefiles: no variable from the
 #   command line (or MAKEFLAGS), which would override any `:=` here; no `-e`; the registries and the
 #   gate's legs only from the makefiles. The release goals need the registries set in Makefile.local,
@@ -3182,9 +3185,15 @@ GUARDED_GOALS := $(filter $(RELEASE_GOALS) $(GATE_GOALS) $(DEPLOY_GOALS),$(MAKEC
 INPUT_GOALS   := $(filter $(RELEASE_GOALS) $(GATE_GOALS),$(MAKECMDGOALS))
 INPUT_OVERRIDES := $(if $(filter release-public,$(MAKECMDGOALS)),$(if $(filter-out release-public,$(MAKECMDGOALS)),$(MAKEOVERRIDES),$(filter-out PUBLIC_RESUME=1,$(MAKEOVERRIDES))),$(MAKEOVERRIDES))
 # A dry run (`make -n`, how luxarch reads this makefile) runs no recipe line, and every $(MAKE) in one
-# inherits -n, so it is exempt; no recipe here carries a `+` that would run under -n.
-mk_flags := $(filter-out -%,$(firstword $(MAKEFLAGS)))
-ifeq ($(findstring n,$(mk_flags)),)
+# inherits -n, so it is exempt; no recipe here carries a `+` that would run under -n. The exemption
+# reads only make's own leading flag word, so a `-n` written into a makefile never switches the lock off.
+# mk_flags is that word's letters, plus each dashed cluster of make's argument-free short flags
+# (`-k`, `-sk`; not `-Otarget` or `-j4`), plus k, i and e for their long spellings.
+mk_dry   := $(filter-out -%,$(firstword $(MAKEFLAGS)))
+mk_strip  = $(subst B,,$(subst d,,$(subst e,,$(subst i,,$(subst k,,$(subst n,,$(subst p,,$(subst q,,$(subst r,,$(subst R,,$(subst s,,$(subst S,,$(subst t,,$(subst w,,$(1)))))))))))))))
+mk_flags := $(mk_dry) $(foreach w,$(patsubst -%,%,$(filter-out --%,$(filter -%,$(MAKEFLAGS)))),$(if $(call mk_strip,$(w)),,$(w))) \
+  $(if $(filter --keep%,$(MAKEFLAGS)),k) $(if $(filter --ig%,$(MAKEFLAGS)),i) $(if $(filter --en%,$(MAKEFLAGS)),e)
+ifeq ($(findstring n,$(mk_dry)),)
 ifneq ($(GUARDED_GOALS),)
 $(if $(findstring i,$(mk_flags)),$(error REFUSING: make -i ignores every failure, so $(GUARDED_GOALS) could not fail: run it without -i))
 endif
@@ -3194,7 +3203,7 @@ $(if $(strip $(INPUT_OVERRIDES)),$(error REFUSING: $(INPUT_GOALS) takes no varia
 $(foreach v,LUX_REGISTRY REGISTRY PRIVATE_REGISTRY CHECK_LEGS,$(if $(filter environment command,$(firstword $(origin $v))),$(error REFUSING: $v comes from the $(origin $v), not the makefiles: set it in Makefile.local)))
 endif
 ifneq ($(filter $(RELEASE_GOALS),$(MAKECMDGOALS)),)
-$(if $(filter environment command,$(firstword $(origin MANUAL_VERSION))),$(error REFUSING: MANUAL_VERSION comes from the $(origin MANUAL_VERSION): $(filter $(RELEASE_GOALS),$(MAKECMDGOALS)) releases the version in VERSION (unset MANUAL_VERSION; it is prod-deploy's rollback setting)))
+$(if $(filter-out undefined,$(origin MANUAL_VERSION)),$(error REFUSING: MANUAL_VERSION comes from the $(origin MANUAL_VERSION): $(filter $(RELEASE_GOALS),$(MAKECMDGOALS)) releases the version in VERSION (unset MANUAL_VERSION, or remove it from Makefile.local; it is prod-deploy's rollback setting, for its command line)))
 $(if $(findstring k,$(mk_flags)),$(error REFUSING: make -k carries on past a failed release step into the next goal (a Release after a copy that stopped): run $(filter $(RELEASE_GOALS),$(MAKECMDGOALS)) without -k))
 $(foreach v,LUX_REGISTRY REGISTRY PRIVATE_REGISTRY,$(if $(strip $($v)),,$(error REFUSING: $v is empty: add it to Makefile.local as a literal (see Makefile.local.example))))
 endif
