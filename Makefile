@@ -3176,6 +3176,11 @@ githooks: ## Point git at the COMMITTED hooks (run once per clone)
 #   MAKEFLAGS' leading word. A makefile that changes MAKEFLAGS (`MAKEFLAGS += -k` in Makefile.local)
 #   is refused outright: GNU make 4.3 keeps such text as written, in clusters and abbreviations
 #   (`-kj4`, `--kee`) that no reading of the word can be trusted to catch.
+# - No guarded goal runs while a makefile declares `.IGNORE` (for every target or for some), which
+#   ignores failures as -i does without touching MAKEFLAGS. Make exposes it only in its database, so
+#   the lock reads that (`make -pq`, about 30 ms). make prints a database even when a makefile stops it
+#   with an error, so only an exit status of 0 or 1 (-q's "up to date" and "not") counts as read; any
+#   other refuses too.
 # - A release, a guard run and the gate take every input from the makefiles: no variable from the
 #   command line (or MAKEFLAGS), which would override any `:=` here; no `-e`; the registries and the
 #   gate's legs only from the makefiles. The release goals need the registries set in Makefile.local,
@@ -3197,6 +3202,13 @@ ifeq ($(findstring n,$(mk_flags)),)
 ifneq ($(GUARDED_GOALS),)
 ifneq ($(mk_start),$(MAKEFLAGS))
 $(error REFUSING: a makefile changes make's flags (MAKEFLAGS was "$(mk_start)" before Makefile.local and is "$(MAKEFLAGS)" here), so $(GUARDED_GOALS) cannot tell which flags it runs under: remove the MAKEFLAGS line from Makefile.local and pass flags on the command line)
+endif
+# The database read is a make with no goal in a clean environment, so it runs no recipe and none of
+# these checks; LUXMARK_DB_READ marks it.
+ifneq ($(origin LUXMARK_DB_READ),command line)
+mk_ignore := $(shell cd '$(subst ','\'',$(CURDIR))' && db=$$(env -i PATH="$$PATH" HOME="$$HOME" '$(subst ','\'',$(MAKE_COMMAND))' -pq -f '$(subst ','\'',$(abspath $(firstword $(MAKEFILE_LIST))))' LUXMARK_DB_READ=1 2>/dev/null); st=$$?; [ "$$st" -le 1 ] || db=; case "$$db" in (*'MAKE_VERSION := '*) printf '%s\n' "$$db" | grep -E '^\.IGNORE:' | head -n 1 ;; (*) echo unreadable ;; esac)
+$(if $(filter unreadable,$(mk_ignore)),$(error REFUSING: could not read make's database (make -pq), so nothing shows that no makefile declares .IGNORE: run make -pq to see why))
+$(if $(mk_ignore),$(error REFUSING: a makefile declares $(mk_ignore), which ignores every failure as -i does, so $(GUARDED_GOALS) could not fail: remove it from Makefile.local))
 endif
 $(if $(findstring i,$(mk_flags)),$(error REFUSING: make -i ignores every failure, so $(GUARDED_GOALS) could not fail: run it without -i))
 endif

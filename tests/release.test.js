@@ -48,6 +48,8 @@ esac
 if [ "$1" = pull ]; then case "$*" in *linux/arm64*) [ "$PLATS" = amd64only ] && { echo 'no matching manifest for linux/arm64' >&2; exit 1; } ;; esac; fi
 if [ "$1" = save ]; then while [ $# -gt 0 ]; do [ "$1" = -o ] && echo tar > "$2"; shift; done; exit 0; fi
 if [ "$1" = run ]; then case "$*" in *--image-archive*) [ "$SCAN" = fail ] && exit 1 ;; esac; fi
+# GUARD_FAIL: every guard container (luxlint, luxarch, ...) reports a red.
+if [ "$1" = run ] && [ -n "$GUARD_FAIL" ]; then case "$*" in *luxlint*|*luxarch*|*luxaudit*) exit 1 ;; esac; fi
 exit 0
 `;
 
@@ -376,6 +378,54 @@ for (const [line, target] of [
     assert.ok(!r.calls.some((c) => c.startsWith('gh release create')), r.trace);
   });
 }
+
+// .IGNORE in a makefile ignores every failure, as -i does, but leaves MAKEFLAGS as it was.
+const IGNORED = /declares \.IGNORE/;
+for (const line of ['.IGNORE:', '.IGNORE: prod-deploy', '.IGNORE: prod-sync prod-deploy']) {
+  test(`${line} in Makefile.local: prod-deploy of an unpublished VERSION is refused and sends nothing to the node`, () => {
+    const r = release({ target: 'prod-deploy', local: `${PROD_LOCAL}${line}\n`, setup: fakeRemote });
+    assert.notEqual(r.status, 0, r.out);
+    assert.match(r.out, IGNORED);
+    assert.deepEqual(r.calls.filter((c) => c.startsWith('ssh')), [], r.trace);
+  });
+}
+
+for (const line of ['.IGNORE:', '.IGNORE: lint']) {
+  test(`${line} in Makefile.local: make lint is refused, never green over a red guard`, () => {
+    const r = release({ target: 'lint', local: `${LOCAL}${line}\n`, env: { GUARD_FAIL: '1' } });
+    assert.notEqual(r.status, 0, r.out);
+    assert.match(r.out, IGNORED);
+  });
+}
+
+test('a red guard fails make lint (control for the .IGNORE cases)', () => {
+  const r = release({ target: 'lint', env: { GUARD_FAIL: '1' } });
+  assert.notEqual(r.status, 0, r.out);
+  assert.doesNotMatch(r.out, IGNORED);
+});
+
+for (const line of ['.IGNORE:', '.IGNORE: release']) {
+  test(`${line} in Makefile.local: a release with a failed scan is refused, never reported as done`, () => {
+    const r = release({ scan: 'fail', local: `${LOCAL}${line}\n` });
+    assert.notEqual(r.status, 0, r.out);
+    assert.match(r.out, IGNORED);
+    assert.equal(builds(r.calls).length, 0, r.trace);
+  });
+}
+
+test('a make database that cannot be read refuses the run (never reads as "no .IGNORE")', () => {
+  // Makefile.local that stops only the lock's own read of the database.
+  const r = release({ local: `${LOCAL}$(if $(LUXMARK_DB_READ),$(error no database here))\n` });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, /could not read make's database/);
+  assert.equal(builds(r.calls).length, 0, r.trace);
+});
+
+test('other special targets in Makefile.local leave a release alone', () => {
+  const r = release({ local: `${LOCAL}.DELETE_ON_ERROR:\n.SECONDEXPANSION:\n` });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(promotions(r.calls).length, 1, r.trace);
+});
 
 test('MAKEFLAGS += -ij4 in Makefile.local: prod-deploy of an unpublished VERSION sends nothing to the node', () => {
   const r = release({ target: 'prod-deploy', local: `${PROD_LOCAL}MAKEFLAGS += -ij4\n`, setup: fakeRemote });
