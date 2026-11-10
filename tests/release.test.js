@@ -450,6 +450,42 @@ test('make -I <dir> prod-deploy with a .IGNORE in <dir>/Makefile.local is refuse
   assert.deepEqual(r.calls.filter((c) => c.startsWith('ssh')), [], r.trace);
 });
 
+test('make -I with a directory whose name holds a space is refused for a guarded goal, and nothing reaches the node', () => {
+  const setup = (sb) => {
+    fakeRemote(sb);
+    mkdirSync(join(sb.parent, 'my conf'));
+    writeFileSync(join(sb.parent, 'my conf', 'Makefile.local'), `${PROD_LOCAL}.IGNORE: prod-deploy\n`);
+  };
+  const r = release({ target: 'prod-deploy', local: null, args: ['-I', '../my conf'], setup });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, /include directory/);
+  assert.deepEqual(r.calls.filter((c) => c.startsWith('ssh')), [], r.trace);
+});
+
+test('a .IGNORE switched on by a command-line variable is refused, and nothing reaches the node', () => {
+  const local = `${PROD_LOCAL}ifdef SKIPCHECK\n.IGNORE: prod-deploy\nendif\n`;
+  const r = release({ target: 'prod-deploy', local, setup: fakeRemote, args: ['SKIPCHECK=1'] });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, IGNORED);
+  assert.deepEqual(r.calls.filter((c) => c.startsWith('ssh')), [], r.trace);
+});
+
+test('a site guard in Makefile.local that a prod-deploy command-line variable satisfies lets the deploy through', () => {
+  const local = `${PROD_LOCAL}ifneq ($(filter prod-deploy,$(MAKECMDGOALS)),)\nifneq ($(CONFIRM),yes)\n$(error pass CONFIRM=yes to deploy)\nendif\nendif\n`;
+  const live = (sb) => {
+    writeFileSync(join(sb.dir, 'compose.yml'), 'services: {}\n');
+    writeFileSync(join(sb.parent, 'ssh'), '#!/bin/sh\necho "ssh $*" >> "$DOCKER_LOG"\ncat >> "$DOCKER_LOG"\n');
+    writeFileSync(join(sb.parent, 'curl'), `#!/bin/sh\necho "curl $*" >> "$DOCKER_LOG"\necho '{"version":"${VERSION}","commit":"abc1234"}'\n`);
+    for (const n of ['ssh', 'curl']) chmodSync(join(sb.parent, n), 0o755);
+  };
+  const refused = release({ target: 'prod-deploy', local, setup: live, env: { MANIFEST_EXISTS: `${GHCR}:` } });
+  assert.match(refused.out, /pass CONFIRM=yes to deploy/);
+  const r = release({ target: 'prod-deploy', local, setup: live, args: ['CONFIRM=yes'], env: { MANIFEST_EXISTS: `${GHCR}:` } });
+  assert.equal(r.status, 0, r.out);
+  assert.doesNotMatch(r.out, /could not read make's database/);
+  assert.ok(r.calls.some((c) => c.startsWith('ssh')), r.trace);
+});
+
 for (const sub of ['a b/luxmark', 'a  b/luxmark']) {
   test(`make lint runs in a checkout whose path is "${sub}"`, () => {
     const r = release({ target: 'lint', sub });

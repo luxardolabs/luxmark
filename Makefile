@@ -3205,9 +3205,13 @@ ifneq ($(GUARDED_GOALS),)
 ifneq ($(mk_start),$(MAKEFLAGS))
 $(error REFUSING: a makefile changes make's flags (MAKEFLAGS was "$(mk_start)" before Makefile.local and is "$(MAKEFLAGS)" here), so $(GUARDED_GOALS) cannot tell which flags it runs under: remove the MAKEFLAGS line from Makefile.local and pass flags on the command line)
 endif
-# The database read is this makefile, in this directory and environment, with this run's goals and
-# include directories, and with make's own flag variables cleared so it takes none of this run's flags.
-mk_ignore := $(shell cd '$(subst ','\'',$(CURDIR))' && db=$$(env -u MAKEFLAGS -u GNUMAKEFLAGS -u MFLAGS -u MAKELEVEL -u MAKEFILES -u MAKEOVERRIDES '$(subst ','\'',$(MAKE_COMMAND))' -pq $(foreach d,$(.INCLUDE_DIRS),-I '$(subst ','\'',$(d))') -f '$(subst ','\'',$(firstword $(MAKEFILE_LIST)))' LUXMARK_DB_READ=1 MAKECMDGOALS='$(subst ','\'',$(MAKECMDGOALS))' 2>/dev/null); st=$$?; [ "$$st" -le 1 ] || db=; case "$$db" in (*'MAKE_VERSION := '*) printf '%s\n' "$$db" | grep -E '^\.IGNORE:' | head -n 1 ;; (*) echo unreadable ;; esac)
+# The database read is this makefile, in this directory and environment, with this run's goals,
+# command-line variables (as written, unexpanded) and include directories, and with make's own flag
+# variables cleared so it takes none of this run's flags. .INCLUDE_DIRS is a list of words, so an
+# include directory whose name holds a space cannot be passed on and is refused.
+$(foreach d,$(.INCLUDE_DIRS),$(if $(wildcard $(d)/.),,$(error REFUSING: an include directory (-I) has a name with a space, so the lock cannot read which makefiles it supplies: run $(GUARDED_GOALS) without -I, or from a directory without spaces)))
+mk_cmdvars := $(foreach v,$(filter-out LUXMARK_DB_READ MAKECMDGOALS,$(.VARIABLES)),$(if $(filter command line,$(origin $(v))),'$(subst ','\'',$(v))=$(subst ','\'',$(value $(v)))'))
+mk_ignore := $(shell cd '$(subst ','\'',$(CURDIR))' && db=$$(env -u MAKEFLAGS -u GNUMAKEFLAGS -u MFLAGS -u MAKELEVEL -u MAKEFILES -u MAKEOVERRIDES '$(subst ','\'',$(MAKE_COMMAND))' -pq $(foreach d,$(.INCLUDE_DIRS),-I '$(subst ','\'',$(d))') -f '$(subst ','\'',$(firstword $(MAKEFILE_LIST)))' $(mk_cmdvars) LUXMARK_DB_READ=1 MAKECMDGOALS='$(subst ','\'',$(MAKECMDGOALS))' 2>/dev/null); st=$$?; [ "$$st" -le 1 ] || db=; case "$$db" in (*'MAKE_VERSION := '*) printf '%s\n' "$$db" | grep -E '^\.IGNORE:' | head -n 1 ;; (*) echo unreadable ;; esac)
 $(if $(filter unreadable,$(mk_ignore)),$(error REFUSING: could not read make's database (make -pq), so nothing shows that no makefile declares .IGNORE: run make -pq to see why))
 $(if $(mk_ignore),$(error REFUSING: a makefile declares $(mk_ignore), which ignores every failure as -i does, so $(GUARDED_GOALS) could not fail: remove it from Makefile.local))
 $(if $(findstring i,$(mk_flags)),$(error REFUSING: make -i ignores every failure, so $(GUARDED_GOALS) could not fail: run it without -i))
