@@ -3164,6 +3164,9 @@ githooks: ## Point git at the COMMITTED hooks (run once per clone)
 # $(error) here.
 # - No goal below runs under `-i`. prod-deploy refuses an unpublished VERSION on its own recipe line,
 #   which `-i` would step past and pin the node to a tag it cannot pull.
+# - No release goal runs under `-k`, which carries on into the next goal after one fails: a copy that
+#   stopped before :latest, then a gh-release that publishes over it.
+# - A release takes VERSION from the VERSION file: a MANUAL_VERSION left in the shell is refused.
 # - A release, a guard run and the gate take every input from the makefiles: no variable from the
 #   command line (or MAKEFLAGS), which would override any `:=` here; no `-e`; the registries and the
 #   gate's legs only from the makefiles. The release goals need the registries set in Makefile.local,
@@ -3191,6 +3194,8 @@ $(if $(strip $(INPUT_OVERRIDES)),$(error REFUSING: $(INPUT_GOALS) takes no varia
 $(foreach v,LUX_REGISTRY REGISTRY PRIVATE_REGISTRY CHECK_LEGS,$(if $(filter environment command,$(firstword $(origin $v))),$(error REFUSING: $v comes from the $(origin $v), not the makefiles: set it in Makefile.local)))
 endif
 ifneq ($(filter $(RELEASE_GOALS),$(MAKECMDGOALS)),)
+$(if $(filter environment command,$(firstword $(origin MANUAL_VERSION))),$(error REFUSING: MANUAL_VERSION comes from the $(origin MANUAL_VERSION): $(filter $(RELEASE_GOALS),$(MAKECMDGOALS)) releases the version in VERSION (unset MANUAL_VERSION; it is prod-deploy's rollback setting)))
+$(if $(findstring k,$(mk_flags)),$(error REFUSING: make -k carries on past a failed release step into the next goal (a Release after a copy that stopped): run $(filter $(RELEASE_GOALS),$(MAKECMDGOALS)) without -k))
 $(foreach v,LUX_REGISTRY REGISTRY PRIVATE_REGISTRY,$(if $(strip $($v)),,$(error REFUSING: $v is empty: add it to Makefile.local as a literal (see Makefile.local.example))))
 endif
 endif

@@ -314,6 +314,38 @@ for (const arg of ['PUBLIC_REGISTRY=', 'RELEASE_NOTES=Dockerfile']) {
   });
 }
 
+for (const [name, opts] of [
+  ['make -k release-public gh-release', { args: ['-k', 'gh-release'] }],
+  ['MAKEFLAGS=k exported, make release-public gh-release', { args: ['gh-release'], env: { MAKEFLAGS: 'k' } }],
+  ['make -k release', { args: ['-k'], target: 'release', env: {} }],
+]) {
+  test(`${name} is refused: -k would carry on past a failed release step into the next one`, () => {
+    const r = release({ ...PUBLIC_OK, ...opts, env: { ...PUBLIC_OK.env, ...opts.env } });
+    assert.notEqual(r.status, 0, r.out);
+    assert.match(r.out, /make -k carries on/);
+    assert.deepEqual(anyPush(r.calls), [], r.trace);
+    assert.ok(!r.calls.some((c) => c.startsWith('gh release create')), r.trace);
+  });
+}
+
+for (const target of ['gh-release', 'release', 'release-public']) {
+  test(`MANUAL_VERSION from the environment is refused for make ${target}: VERSION is the VERSION file`, () => {
+    // An older release, tagged on origin with its own notes: the version a stale shell would name.
+    const older = (sb) => {
+      const git = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: sb.dir });
+      writeFileSync(join(sb.dir, 'src', 'release_notes', '2026.10.0.md'), '# 2026.10.0\n');
+      git('add', '-A');
+      git('commit', '-qm', 'older notes');
+      git('tag', '-a', 'v2026.10.0', '-m', 'v');
+      git('push', '-q', 'origin', 'v2026.10.0');
+    };
+    const r = release({ target, setup: older, env: { MANIFEST_EXISTS: `${GHCR}:`, MANUAL_VERSION: '2026.10.0' } });
+    assert.notEqual(r.status, 0, r.out);
+    assert.ok(!r.calls.some((c) => c.startsWith('gh release create')), r.trace);
+    assert.deepEqual(anyPush(r.calls), [], r.trace);
+  });
+}
+
 test('make gh-release publishes no Release while GHCR has no :VERSION', () => {
   const r = release({ target: 'gh-release' });
   assert.notEqual(r.status, 0, r.out);
