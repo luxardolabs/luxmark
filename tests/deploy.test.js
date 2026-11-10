@@ -32,11 +32,12 @@ exit 0
 `,
   curl: `#!/bin/sh
 echo "curl $*" >> "$LOGDIR/calls"
+[ -n "$CURLFAIL" ] && { echo 'curl: (7) Failed to connect' >&2; exit 7; }
 if [ -n "$LIVEJSON" ]; then printf '%s' "$LIVEJSON"; else printf '{"app":"luxmark","version":"%s","commit":"abc1234"}' "$LIVE"; fi
 `,
 };
 
-function run(target, { published = 'yes', live = VERSION, liveJson = '', local = true, node = () => {}, args = [], fakes = {} } = {}) {
+function run(target, { published = 'yes', live = VERSION, liveJson = '', curlFail = '', local = true, node = () => {}, args = [], fakes = {} } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'luxmark-deploy-'));
   const prodDir = join(dir, 'node');
   spawnSync('mkdir', ['-p', prodDir]);
@@ -55,7 +56,7 @@ function run(target, { published = 'yes', live = VERSION, liveJson = '', local =
   const r = spawnSync('make', ['--no-print-directory', target, ...args], {
     cwd: dir,
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, LOGDIR: logs, PUBLISHED: published, LIVE: live, LIVEJSON: liveJson },
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, LOGDIR: logs, PUBLISHED: published, LIVE: live, LIVEJSON: liveJson, CURLFAIL: curlFail },
   });
   const files = readdirSync(logs);
   const calls = files.includes('calls') ? readFileSync(join(logs, 'calls'), 'utf8').split('\n').filter(Boolean) : [];
@@ -132,6 +133,13 @@ test('prod-deploy fails when the live site does not report VERSION afterwards', 
   const r = run('prod-deploy', { live: '1.0.5' });
   assert.notEqual(r.status, 0);
   assert.match(r.out, /DEPLOY NOT LIVE/);
+});
+
+test('prod-deploy says DEPLOY NOT LIVE when the live site cannot be reached afterwards', () => {
+  const r = run('prod-deploy', { curlFail: '1' });
+  assert.notEqual(r.status, 0);
+  assert.match(r.out, /DEPLOY NOT LIVE: .* reports "unreachable"/);
+  assert.doesNotMatch(r.out, /Traceback/);
 });
 
 test('a rollback to a release whose version.json has no top-level commit still verifies', () => {

@@ -2080,7 +2080,7 @@ prod-deploy: require-prod ## Pin the node to :$(VERSION), pull, recreate, wait h
 	  'mv .env.new .env' \
 	  '$(PROD_COMPOSE) pull' '$(PROD_COMPOSE) up -d --wait --wait-timeout $(PROD_WAIT)' \
 	  'docker inspect -f "{{.Name}} {{.State.Health.Status}} {{.Config.Image}}" luxmark-web' | $(PROD_SH); \
-	got=$$(curl -fsS --max-time 10 $(PROD_URL)/version.json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("version", "?"), d.get("commit") or d.get("git", {}).get("commit", "?"))'); \
+	got=$$(curl -fsS --max-time 10 $(PROD_URL)/version.json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("version", "?"), d.get("commit") or d.get("git", {}).get("commit", "?"))' 2>/dev/null) || got=unreachable; \
 	case "$$got" in "$(VERSION) "*) echo '$(GREEN)live: $(PROD_URL) serves '"$$got"'$(NC)';; \
 	  *) echo '$(RED)DEPLOY NOT LIVE: $(PROD_URL)/version.json reports "'"$$got"'", expected $(VERSION)$(NC)'; exit 1;; esac
 
