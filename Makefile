@@ -2025,7 +2025,8 @@ deploy-local: ## Deploy to local environment
 # compose never builds. TLS and routing come from the edge nginx-ovh, which proxies
 # luxmark.luxardolabs.com to http://luxmark:8080 (hence the service/container name in compose.yml).
 # The node topology lives in the gitignored Makefile.local (this repo is public). After a release:
-#   make release        # build + scan every platform + create :$(VERSION) on GHCR, then the GitHub Release
+#   make release        # build + scan every platform + create the private :$(VERSION)
+#   make release-public # rescan, copy :$(VERSION) and :latest to GHCR, then the GitHub Release
 #   make prod-deploy    # refuse an unpublished :$(VERSION), sync compose.yml (checksummed), pin TAG, recreate, verify live
 # Roll back by deploying an older released version: make prod-deploy MANUAL_VERSION=<x.y.z>
 # =============================================================================
@@ -2038,42 +2039,48 @@ PROD_SH       = ssh -o BatchMode=yes $(PROD_JUMP) ssh -o BatchMode=yes root@$(PR
 PROD_COMPOSE := docker compose -f compose.yml
 PROD_WAIT    ?= 90
 
+# Each prod step is ONE shell command (one recipe line under `set -e`), with its own topology check
+# first. make can be told to ignore a failed recipe line (`.IGNORE` in a makefile, -i, -k), and then
+# runs the next line; within one line a failure ends the shell, so a refusal can never be stepped past
+# into the steps after it. Nothing here calls `$(MAKE)`, for the same reason.
+PROD_REQUIRE_SH = if [ -z "$(PROD_JUMP)" ] || [ -z "$(PROD_NODE)" ] || [ -z "$(PROD_DIR)" ]; then \
+  echo '$(RED)PROD_JUMP / PROD_NODE / PROD_DIR unset: set them in Makefile.local (see Makefile.local.example).$(NC)'; exit 1; fi
+# One command per remote script line, so the node's `set -e` stops on any failure (in an `a && b` list
+# it does not). The payload is checksummed against the local file BEFORE it replaces anything, and a
+# stray compose.yaml is moved to a timestamped name (`mv -n`), so no earlier copy is ever overwritten.
+PROD_SYNC_SH = b64=$$(base64 < compose.yml | tr -d '\n'); sum=$$(sha256sum compose.yml | cut -d' ' -f1); \
+  [ -n "$$b64" ] && [ -n "$$sum" ] || { echo '$(RED)REFUSING: could not encode compose.yml locally$(NC)'; exit 1; }; \
+  printf '%s\n' 'set -e' 'mkdir -p $(PROD_DIR)' 'cd $(PROD_DIR)' \
+    "echo $$b64 | base64 -d > compose.yml.new" \
+    "echo '$$sum  compose.yml.new' | sha256sum -c --quiet -" \
+    'mv compose.yml.new compose.yml' \
+    'if [ -f compose.yaml ]; then b=compose.yaml.pre-compose-yml.$$(date +%Y%m%d%H%M%S); mv -n compose.yaml "$$b"; [ ! -e compose.yaml ]; echo "moved the old compose.yaml to $$b"; fi' \
+    | $(PROD_SH); \
+  echo '$(GREEN)synced compose.yml to $(PROD_NODE):$(PROD_DIR) (checksum verified)$(NC)'
+
 .PHONY: require-prod prod-sync prod-deploy prod-ps prod-logs prod-health
 require-prod: ## Fail with the remedy when the prod node topology (Makefile.local) is absent
-	@if [ -z "$(PROD_JUMP)" ] || [ -z "$(PROD_NODE)" ] || [ -z "$(PROD_DIR)" ]; then \
-	  echo '$(RED)PROD_JUMP / PROD_NODE / PROD_DIR unset: set them in Makefile.local (see Makefile.local.example).$(NC)'; \
-	  exit 1; \
-	fi
+	@$(PROD_REQUIRE_SH)
 
 prod-sync: require-prod ## Push compose.yml to the node (the repo is the source of truth)
-	@# One command per script line, so `set -e` stops on any failure: in an `a && b` list it does not.
-	@# The payload is checksummed against the local file BEFORE it replaces anything, and a stray
-	@# compose.yaml is moved to a timestamped name (`mv -n`), so no earlier copy is ever overwritten.
-	@set -e; b64=$$(base64 < compose.yml | tr -d '\n'); sum=$$(sha256sum compose.yml | cut -d' ' -f1); \
-	[ -n "$$b64" ] && [ -n "$$sum" ] || { echo '$(RED)REFUSING: could not encode compose.yml locally$(NC)'; exit 1; }; \
-	printf '%s\n' 'set -e' 'mkdir -p $(PROD_DIR)' 'cd $(PROD_DIR)' \
-	  "echo $$b64 | base64 -d > compose.yml.new" \
-	  "echo '$$sum  compose.yml.new' | sha256sum -c --quiet -" \
-	  'mv compose.yml.new compose.yml' \
-	  'if [ -f compose.yaml ]; then b=compose.yaml.pre-compose-yml.$$(date +%Y%m%d%H%M%S); mv -n compose.yaml "$$b"; [ ! -e compose.yaml ]; echo "moved the old compose.yaml to $$b"; fi' \
-	  | $(PROD_SH)
-	@echo '$(GREEN)synced compose.yml to $(PROD_NODE):$(PROD_DIR) (checksum verified)$(NC)'
+	@set -e; $(PROD_REQUIRE_SH); $(PROD_SYNC_SH)
 
+# The published check runs BEFORE the sync, so a refused deploy changes nothing on the node. Only the
+# TAG line of the node's .env is rewritten; PORT, LUXMARK_IMAGE and the rest are kept. Only `version`
+# is compared live: older releases (1.0.5) nest the commit under git.commit.
 prod-deploy: require-prod ## Pin the node to :$(VERSION), pull, recreate, wait healthy, verify the live site
-	@# The published check runs BEFORE prod-sync, so a refused deploy changes nothing on the node.
-	@out=$$(docker manifest inspect $(GHCR_IMAGE):$(VERSION) 2>&1) || { \
-	  echo '$(RED)REFUSING: $(GHCR_IMAGE):$(VERSION) is not published (run the release first): '"$$out"'$(NC)'; exit 1; }
-	@$(MAKE) --no-print-directory prod-sync
-	@echo '$(BLUE)Deploying $(GHCR_IMAGE):$(VERSION) to $(PROD_NODE):$(PROD_DIR)...$(NC)'
-	@# Only the TAG line of the node's .env is rewritten; PORT, LUXMARK_IMAGE and the rest are kept.
-	@printf '%s\n' 'set -e' 'cd $(PROD_DIR)' 'touch .env' \
+	@set -e; $(PROD_REQUIRE_SH); \
+	out=$$(docker manifest inspect $(GHCR_IMAGE):$(VERSION) 2>&1) || { \
+	  echo '$(RED)REFUSING: $(GHCR_IMAGE):$(VERSION) is not published (run the release first): '"$$out"'$(NC)'; exit 1; }; \
+	$(PROD_SYNC_SH); \
+	echo '$(BLUE)Deploying $(GHCR_IMAGE):$(VERSION) to $(PROD_NODE):$(PROD_DIR)...$(NC)'; \
+	printf '%s\n' 'set -e' 'cd $(PROD_DIR)' 'touch .env' \
 	  'grep -v "^TAG=" .env > .env.new || true' \
 	  'printf "TAG=%s\n" "$(VERSION)" >> .env.new' \
 	  'mv .env.new .env' \
 	  '$(PROD_COMPOSE) pull' '$(PROD_COMPOSE) up -d --wait --wait-timeout $(PROD_WAIT)' \
-	  'docker inspect -f "{{.Name}} {{.State.Health.Status}} {{.Config.Image}}" luxmark-web' | $(PROD_SH)
-	@# Only `version` is compared: older releases (1.0.5) nest the commit under git.commit.
-	@got=$$(curl -fsS --max-time 10 $(PROD_URL)/version.json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("version", "?"), d.get("commit") or d.get("git", {}).get("commit", "?"))'); \
+	  'docker inspect -f "{{.Name}} {{.State.Health.Status}} {{.Config.Image}}" luxmark-web' | $(PROD_SH); \
+	got=$$(curl -fsS --max-time 10 $(PROD_URL)/version.json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("version", "?"), d.get("commit") or d.get("git", {}).get("commit", "?"))'); \
 	case "$$got" in "$(VERSION) "*) echo '$(GREEN)live: $(PROD_URL) serves '"$$got"'$(NC)';; \
 	  *) echo '$(RED)DEPLOY NOT LIVE: $(PROD_URL)/version.json reports "'"$$got"'", expected $(VERSION)$(NC)'; exit 1;; esac
 
@@ -3176,12 +3183,6 @@ githooks: ## Point git at the COMMITTED hooks (run once per clone)
 #   MAKEFLAGS' leading word. A makefile that changes MAKEFLAGS (`MAKEFLAGS += -k` in Makefile.local)
 #   is refused outright: GNU make 4.3 keeps such text as written, in clusters and abbreviations
 #   (`-kj4`, `--kee`) that no reading of the word can be trusted to catch.
-# - No guarded goal runs while a makefile declares `.IGNORE` (for every target or for some), which
-#   ignores failures as -i does without touching MAKEFLAGS. Make exposes it only in its database, so
-#   the lock reads that (`make -pq`, about 30 ms). make prints a database even when a makefile stops it
-#   with an error, so only an exit status of 0 or 1 (-q's "up to date" and "not") counts as read; any
-#   other refuses too. Stated limit: like any make, the read first remakes a makefile Makefile.local
-#   generates (`include site.mk` with a `site.mk:` rule), so that recipe runs once more per guarded run.
 # - A release, a guard run and the gate take every input from the makefiles: no variable from the
 #   command line (or MAKEFLAGS), which would override any `:=` here; no `-e`; the registries and the
 #   gate's legs only from the makefiles. The release goals need the registries set in Makefile.local,
@@ -3199,21 +3200,11 @@ INPUT_OVERRIDES := $(if $(filter release-public,$(MAKECMDGOALS)),$(if $(filter-o
 # A dry run (`make -n`, how luxarch reads this makefile) runs no recipe line, and every $(MAKE) in one
 # inherits -n, so it is exempt; no recipe here carries a `+` that would run under -n.
 mk_flags := $(filter-out -%,$(firstword $(MAKEFLAGS)))
-# LUXMARK_DB_READ marks the lock's own read of make's database (below), which these checks skip.
-ifeq ($(findstring n,$(mk_flags))$(if $(filter command line,$(origin LUXMARK_DB_READ)),read),)
+ifeq ($(findstring n,$(mk_flags)),)
 ifneq ($(GUARDED_GOALS),)
 ifneq ($(mk_start),$(MAKEFLAGS))
 $(error REFUSING: a makefile changes make's flags (MAKEFLAGS was "$(mk_start)" before Makefile.local and is "$(MAKEFLAGS)" here), so $(GUARDED_GOALS) cannot tell which flags it runs under: remove the MAKEFLAGS line from Makefile.local and pass flags on the command line)
 endif
-# The database read is this makefile, in this directory and environment, with this run's goals,
-# command-line variables (as written, unexpanded) and include directories, and with make's own flag
-# variables cleared so it takes none of this run's flags. .INCLUDE_DIRS is a list of words, so an
-# include directory whose name holds a space cannot be passed on and is refused.
-$(foreach d,$(.INCLUDE_DIRS),$(if $(wildcard $(d)/.),,$(error REFUSING: an include directory (-I) has a name with a space, so the lock cannot read which makefiles it supplies: run $(GUARDED_GOALS) without -I, or from a directory without spaces)))
-mk_cmdvars := $(foreach v,$(filter-out LUXMARK_DB_READ MAKECMDGOALS,$(.VARIABLES)),$(if $(filter command line,$(origin $(v))),'$(subst ','\'',$(v))=$(subst ','\'',$(value $(v)))'))
-mk_ignore := $(shell cd '$(subst ','\'',$(CURDIR))' && db=$$(env -u MAKEFLAGS -u GNUMAKEFLAGS -u MFLAGS -u MAKELEVEL -u MAKEFILES -u MAKEOVERRIDES '$(subst ','\'',$(MAKE_COMMAND))' -pq $(foreach d,$(.INCLUDE_DIRS),-I '$(subst ','\'',$(d))') -f '$(subst ','\'',$(firstword $(MAKEFILE_LIST)))' $(mk_cmdvars) LUXMARK_DB_READ=1 MAKECMDGOALS='$(subst ','\'',$(MAKECMDGOALS))' 2>/dev/null); st=$$?; [ "$$st" -le 1 ] || db=; case "$$db" in (*'MAKE_VERSION := '*) printf '%s\n' "$$db" | grep -E '^\.IGNORE:' | head -n 1 ;; (*) echo unreadable ;; esac)
-$(if $(filter unreadable,$(mk_ignore)),$(error REFUSING: could not read make's database (make -pq), so nothing shows that no makefile declares .IGNORE: run make -pq to see why))
-$(if $(mk_ignore),$(error REFUSING: a makefile declares $(mk_ignore), which ignores every failure as -i does, so $(GUARDED_GOALS) could not fail: remove it from Makefile.local))
 $(if $(findstring i,$(mk_flags)),$(error REFUSING: make -i ignores every failure, so $(GUARDED_GOALS) could not fail: run it without -i))
 endif
 ifneq ($(INPUT_GOALS),)

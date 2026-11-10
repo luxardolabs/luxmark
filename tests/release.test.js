@@ -380,111 +380,6 @@ for (const [line, target] of [
   });
 }
 
-// .IGNORE in a makefile ignores every failure, as -i does, but leaves MAKEFLAGS as it was.
-const IGNORED = /declares \.IGNORE/;
-for (const line of ['.IGNORE:', '.IGNORE: prod-deploy', '.IGNORE: prod-sync prod-deploy']) {
-  test(`${line} in Makefile.local: prod-deploy of an unpublished VERSION is refused and sends nothing to the node`, () => {
-    const r = release({ target: 'prod-deploy', local: `${PROD_LOCAL}${line}\n`, setup: fakeRemote });
-    assert.notEqual(r.status, 0, r.out);
-    assert.match(r.out, IGNORED);
-    assert.deepEqual(r.calls.filter((c) => c.startsWith('ssh')), [], r.trace);
-  });
-}
-
-for (const line of ['.IGNORE:', '.IGNORE: lint']) {
-  test(`${line} in Makefile.local: make lint is refused, never green over a red guard`, () => {
-    const r = release({ target: 'lint', local: `${LOCAL}${line}\n`, env: { GUARD_FAIL: '1' } });
-    assert.notEqual(r.status, 0, r.out);
-    assert.match(r.out, IGNORED);
-  });
-}
-
-test('a red guard fails make lint (control for the .IGNORE cases)', () => {
-  const r = release({ target: 'lint', env: { GUARD_FAIL: '1' } });
-  assert.notEqual(r.status, 0, r.out);
-  assert.doesNotMatch(r.out, IGNORED);
-});
-
-for (const line of ['.IGNORE:', '.IGNORE: release']) {
-  test(`${line} in Makefile.local: a release with a failed scan is refused, never reported as done`, () => {
-    const r = release({ scan: 'fail', local: `${LOCAL}${line}\n` });
-    assert.notEqual(r.status, 0, r.out);
-    assert.match(r.out, IGNORED);
-    assert.equal(builds(r.calls).length, 0, r.trace);
-  });
-}
-
-test('a make database that cannot be read refuses the run (never reads as "no .IGNORE")', () => {
-  // Makefile.local that stops only the lock's own read of the database.
-  const r = release({ local: `${LOCAL}$(if $(LUXMARK_DB_READ),$(error no database here))\n` });
-  assert.notEqual(r.status, 0, r.out);
-  assert.match(r.out, /could not read make's database/);
-  assert.equal(builds(r.calls).length, 0, r.trace);
-});
-
-test('a .IGNORE that Makefile.local declares only for the goals given is refused, and nothing reaches the node', () => {
-  const scoped = 'ifneq ($(filter prod-%,$(MAKECMDGOALS)),)\n.IGNORE: prod-deploy\nendif\n';
-  const r = release({ target: 'prod-deploy', local: `${PROD_LOCAL}${scoped}`, setup: fakeRemote });
-  assert.notEqual(r.status, 0, r.out);
-  assert.match(r.out, IGNORED);
-  assert.deepEqual(r.calls.filter((c) => c.startsWith('ssh')), [], r.trace);
-});
-
-test('a .IGNORE in a site makefile the environment names is refused, and nothing reaches the node', () => {
-  const setup = (sb) => { fakeRemote(sb); writeFileSync(join(sb.parent, 'site.mk'), '.IGNORE: prod-deploy\n'); };
-  const r = release({ target: 'prod-deploy', local: `${PROD_LOCAL}-include $(LUXMARK_SITE_MK)\n`, setup, env: { LUXMARK_SITE_MK: '../site.mk' } });
-  assert.notEqual(r.status, 0, r.out);
-  assert.match(r.out, IGNORED);
-  assert.deepEqual(r.calls.filter((c) => c.startsWith('ssh')), [], r.trace);
-});
-
-test('make -I <dir> prod-deploy with a .IGNORE in <dir>/Makefile.local is refused, and nothing reaches the node', () => {
-  const setup = (sb) => {
-    fakeRemote(sb);
-    mkdirSync(join(sb.parent, 'conf'));
-    writeFileSync(join(sb.parent, 'conf', 'Makefile.local'), `${PROD_LOCAL}.IGNORE: prod-deploy\n`);
-  };
-  const r = release({ target: 'prod-deploy', local: null, args: ['-I', '../conf'], setup });
-  assert.notEqual(r.status, 0, r.out);
-  assert.match(r.out, IGNORED);
-  assert.deepEqual(r.calls.filter((c) => c.startsWith('ssh')), [], r.trace);
-});
-
-test('make -I with a directory whose name holds a space is refused for a guarded goal, and nothing reaches the node', () => {
-  const setup = (sb) => {
-    fakeRemote(sb);
-    mkdirSync(join(sb.parent, 'my conf'));
-    writeFileSync(join(sb.parent, 'my conf', 'Makefile.local'), `${PROD_LOCAL}.IGNORE: prod-deploy\n`);
-  };
-  const r = release({ target: 'prod-deploy', local: null, args: ['-I', '../my conf'], setup });
-  assert.notEqual(r.status, 0, r.out);
-  assert.match(r.out, /include directory/);
-  assert.deepEqual(r.calls.filter((c) => c.startsWith('ssh')), [], r.trace);
-});
-
-test('a .IGNORE switched on by a command-line variable is refused, and nothing reaches the node', () => {
-  const local = `${PROD_LOCAL}ifdef SKIPCHECK\n.IGNORE: prod-deploy\nendif\n`;
-  const r = release({ target: 'prod-deploy', local, setup: fakeRemote, args: ['SKIPCHECK=1'] });
-  assert.notEqual(r.status, 0, r.out);
-  assert.match(r.out, IGNORED);
-  assert.deepEqual(r.calls.filter((c) => c.startsWith('ssh')), [], r.trace);
-});
-
-test('a site guard in Makefile.local that a prod-deploy command-line variable satisfies lets the deploy through', () => {
-  const local = `${PROD_LOCAL}ifneq ($(filter prod-deploy,$(MAKECMDGOALS)),)\nifneq ($(CONFIRM),yes)\n$(error pass CONFIRM=yes to deploy)\nendif\nendif\n`;
-  const live = (sb) => {
-    writeFileSync(join(sb.dir, 'compose.yml'), 'services: {}\n');
-    writeFileSync(join(sb.parent, 'ssh'), '#!/bin/sh\necho "ssh $*" >> "$DOCKER_LOG"\ncat >> "$DOCKER_LOG"\n');
-    writeFileSync(join(sb.parent, 'curl'), `#!/bin/sh\necho "curl $*" >> "$DOCKER_LOG"\necho '{"version":"${VERSION}","commit":"abc1234"}'\n`);
-    for (const n of ['ssh', 'curl']) chmodSync(join(sb.parent, n), 0o755);
-  };
-  const refused = release({ target: 'prod-deploy', local, setup: live, env: { MANIFEST_EXISTS: `${GHCR}:` } });
-  assert.match(refused.out, /pass CONFIRM=yes to deploy/);
-  const r = release({ target: 'prod-deploy', local, setup: live, args: ['CONFIRM=yes'], env: { MANIFEST_EXISTS: `${GHCR}:` } });
-  assert.equal(r.status, 0, r.out);
-  assert.doesNotMatch(r.out, /could not read make's database/);
-  assert.ok(r.calls.some((c) => c.startsWith('ssh')), r.trace);
-});
 
 for (const sub of ['a b/luxmark', 'a  b/luxmark']) {
   test(`make lint runs in a checkout whose path is "${sub}"`, () => {
@@ -835,6 +730,49 @@ const fakeRemote = ({ parent }) => {
     chmodSync(join(parent, n), 0o755);
   }
 };
+
+// Ignoring a failed recipe line (`.IGNORE` in a makefile, however it is switched on) never gets a
+// deploy past its own refusal: prod-deploy is one shell command, so the refusal ends it.
+const NOT_PUBLISHED = /is not published/;
+const sshCalls = (r) => r.calls.filter((c) => c.startsWith('ssh'));
+for (const [name, opts] of [
+  ['.IGNORE: in Makefile.local', { local: `${PROD_LOCAL}.IGNORE:\n` }],
+  ['.IGNORE: prod-deploy in Makefile.local', { local: `${PROD_LOCAL}.IGNORE: prod-deploy\n` }],
+  ['.IGNORE: prod-sync prod-deploy in Makefile.local', { local: `${PROD_LOCAL}.IGNORE: prod-sync prod-deploy\n` }],
+  ['a .IGNORE declared only for prod-* goals', { local: `${PROD_LOCAL}ifneq ($(filter prod-%,$(MAKECMDGOALS)),)\n.IGNORE: prod-deploy\nendif\n` }],
+  ['a .IGNORE switched on by a command-line variable', { local: `${PROD_LOCAL}ifdef SKIPCHECK\n.IGNORE: prod-deploy\nendif\n`, args: ['SKIPCHECK=1'] }],
+  ['a .IGNORE switched on through make -e', { local: `${PROD_LOCAL}STRICT := yes\nifneq ($(STRICT),yes)\n.IGNORE: prod-deploy\nendif\n`, args: ['-e'], env: { STRICT: 'no' } }],
+  ['a .IGNORE in a site makefile the environment names', {
+    local: `${PROD_LOCAL}-include $(LUXMARK_SITE_MK)\n`, env: { LUXMARK_SITE_MK: '../site.mk' },
+    extra: (sb) => writeFileSync(join(sb.parent, 'site.mk'), '.IGNORE: prod-deploy\n'),
+  }],
+  ...['conf', 'my conf'].map((d) => [`a .IGNORE in the Makefile.local that make -I "../${d}" finds`, {
+    local: null, args: ['-I', `../${d}`],
+    extra: (sb) => { mkdirSync(join(sb.parent, d)); writeFileSync(join(sb.parent, d, 'Makefile.local'), `${PROD_LOCAL}.IGNORE: prod-deploy\n`); },
+  }]),
+]) {
+  test(`${name}: prod-deploy of an unpublished VERSION refuses and sends nothing to the node`, () => {
+    const { extra = () => {}, ...rest } = opts;
+    const r = release({ target: 'prod-deploy', ...rest, setup: (sb) => { fakeRemote(sb); extra(sb); } });
+    assert.match(r.out, NOT_PUBLISHED);
+    assert.deepEqual(sshCalls(r), [], r.trace);
+  });
+}
+
+test('a site guard in Makefile.local that a prod-deploy command-line variable satisfies lets the deploy through', () => {
+  const local = `${PROD_LOCAL}ifneq ($(filter prod-deploy,$(MAKECMDGOALS)),)\nifneq ($(CONFIRM),yes)\n$(error pass CONFIRM=yes to deploy)\nendif\nendif\n`;
+  const live = (sb) => {
+    writeFileSync(join(sb.dir, 'compose.yml'), 'services: {}\n');
+    writeFileSync(join(sb.parent, 'ssh'), '#!/bin/sh\necho "ssh $*" >> "$DOCKER_LOG"\ncat >> "$DOCKER_LOG"\n');
+    writeFileSync(join(sb.parent, 'curl'), `#!/bin/sh\necho "curl $*" >> "$DOCKER_LOG"\necho '{"version":"${VERSION}","commit":"abc1234"}'\n`);
+    for (const n of ['ssh', 'curl']) chmodSync(join(sb.parent, n), 0o755);
+  };
+  const refused = release({ target: 'prod-deploy', local, setup: live, env: { MANIFEST_EXISTS: `${GHCR}:` } });
+  assert.match(refused.out, /pass CONFIRM=yes to deploy/);
+  const r = release({ target: 'prod-deploy', local, setup: live, args: ['CONFIRM=yes'], env: { MANIFEST_EXISTS: `${GHCR}:` } });
+  assert.equal(r.status, 0, r.out);
+  assert.ok(sshCalls(r).length > 0, r.trace);
+});
 test('make prod-deploy MANUAL_VERSION=<older> is the rollback: it pins the node to that version', () => {
   const ROLLBACK = '2026.10.0';
   const live = ({ parent, dir }) => {
