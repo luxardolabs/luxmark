@@ -73,11 +73,20 @@ if [ "$1" = images ] && [ -n "$LOCAL_TAGS" ]; then echo "$LOCAL_TAGS"; exit 0; f
 if [ "$1" = run ] && [ -n "$GUARD_FAIL" ]; then exit 1; fi
 exit 0
 `;
-// git whose `status` fails (exit 128, nothing on stdout) while every other command works, as in a
-// checkout git distrusts: the clean-tree check must refuse on the failure, not read empty as clean.
+// git as make sees it in the sandbox. origin's URL is a github.com repository (the Release names it),
+// and its pushurl is the sandbox's bare repository, so pushes land there; `ls-remote origin` is sent
+// there too (SANDBOX_ORIGIN), never to github.com. FAIL_STATUS=1: `status` fails (exit 128, nothing on
+// stdout) while every other command works, as in a checkout git distrusts: the clean-tree check must
+// refuse on the failure, not read empty as clean.
 const REAL_GIT = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
-const FAILING_STATUS_GIT = `#!/bin/sh
-for a in "$@"; do [ "$a" = status ] && { echo 'fatal: detected dubious ownership' >&2; exit 128; }; done
+const ORIGIN_URL = 'https://github.com/luxardolabs/luxmark.git';
+const SANDBOX_GIT = `#!/bin/sh
+if [ -n "$FAIL_STATUS" ]; then for a in "$@"; do [ "$a" = status ] && { echo 'fatal: detected dubious ownership' >&2; exit 128; }; done; fi
+if [ "$1" = ls-remote ]; then
+  shift; n=$#
+  while [ "$n" -gt 0 ]; do a=$1; shift; [ "$a" = origin ] && a=\${SANDBOX_ORIGIN:?the sandbox git needs SANDBOX_ORIGIN}; set -- "$@" "$a"; n=$((n - 1)); done
+  set -- ls-remote "$@"
+fi
 exec ${REAL_GIT} "$@"
 `;
 
@@ -97,7 +106,7 @@ function sandbox({ tag = true, registry = 'reg.test', local, sub = 'luxmark' } =
   // The block refuses a Dockerfile the commit does not hold; the fake docker never builds it.
   writeFileSync(join(dir, 'Dockerfile'), 'FROM scratch\n');
   writeFileSync(join(dir, 'VERSION'), `${VERSION}\n`);
-  for (const [name, body] of [['docker', FAKE_DOCKER], ['gh', FAKE_GH]]) {
+  for (const [name, body] of [['docker', FAKE_DOCKER], ['gh', FAKE_GH], ['git', SANDBOX_GIT]]) {
     writeFileSync(join(parent, name), body);
     chmodSync(join(parent, name), 0o755);
   }
@@ -109,7 +118,8 @@ function sandbox({ tag = true, registry = 'reg.test', local, sub = 'luxmark' } =
   git('commit', '-qm', 'sandbox');
   // The Release hangs off a tag on origin, so the sandbox has one.
   execFileSync('git', ['init', '-q', '--bare', join(parent, 'origin.git')]);
-  git('remote', 'add', 'origin', join(parent, 'origin.git'));
+  git('remote', 'add', 'origin', ORIGIN_URL);
+  git('config', 'remote.origin.pushurl', join(parent, 'origin.git'));
   if (tag) {
     git('tag', '-a', `v${VERSION}`, '-m', 'v');
     if (tag !== 'local') git('push', '-q', 'origin', `v${VERSION}`);
@@ -120,17 +130,13 @@ function sandbox({ tag = true, registry = 'reg.test', local, sub = 'luxmark' } =
 function release({ manifest = 'notfound', scan = 'pass', plats = 'both', tag = true, setup = () => {}, args = [], fromParent = false, env = {}, target = 'release', registry = 'reg.test', failStatus = false, local, sub } = {}) {
   const sb = sandbox({ tag, registry, local, sub });
   setup(sb);
-  if (failStatus) {
-    writeFileSync(join(sb.parent, 'git'), FAILING_STATUS_GIT);
-    chmodSync(join(sb.parent, 'git'), 0o755);
-  }
   const log = join(sb.parent, 'docker.log');
   writeFileSync(log, '');
   const makeArgs = fromParent ? ['-C', 'luxmark'] : [];
   const r = spawnSync('make', ['--no-print-directory', ...makeArgs, ...args, target], {
     cwd: fromParent ? sb.parent : sb.dir,
     encoding: 'utf8',
-    env: { ...process.env, HOME: sb.parent, PATH: `${sb.parent}:${process.env.PATH}`, DOCKER_LOG: log, MANIFEST: manifest, SCAN: scan, PLATS: plats, ...env },
+    env: { ...process.env, HOME: sb.parent, PATH: `${sb.parent}:${process.env.PATH}`, DOCKER_LOG: log, MANIFEST: manifest, SCAN: scan, PLATS: plats, SANDBOX_ORIGIN: join(sb.parent, 'origin.git'), FAIL_STATUS: failStatus ? '1' : '', ...env },
   });
   const calls = readFileSync(log, 'utf8').split('\n').filter(Boolean);
   return { ...sb, status: r.status, out: r.stdout + r.stderr, calls, trace: calls.join('\n') };
@@ -220,6 +226,29 @@ test('release-public rescans the released digest, then creates GHCR :VERSION and
   const ghCreate = r.calls.findIndex((c) => c.startsWith('gh release create'));
   assert.ok(ghCreate > r.calls.indexOf(promote[0]), `the GitHub Release follows the public copy\n${r.trace}`);
   assert.match(r.calls[ghCreate], new RegExp(`--notes-file src/release_notes/${VERSION}\\.md`));
+});
+
+test('every gh release call names origin\'s GitHub repository', () => {
+  const r = release(PUBLIC_OK);
+  assert.equal(r.status, 0, r.out);
+  const calls = r.calls.filter((c) => c.startsWith('gh release view v') || c.startsWith('gh release create'));
+  assert.ok(calls.length >= 2, r.trace);
+  for (const c of calls) assert.match(c, / -R github\.com\/luxardolabs\/luxmark /, c);
+});
+
+test('an origin that is not a github.com repository is refused before anything is built', () => {
+  const setup = (sb) => execFileSync('git', ['remote', 'set-url', 'origin', join(sb.parent, 'origin.git')], { cwd: sb.dir });
+  const r = release({ setup });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, /origin's URL is not a github\.com repository/);
+  assert.equal(builds(r.calls).length, 0, r.trace);
+});
+
+test('a GH_REPO naming another repository is refused: the Release belongs to origin\'s', () => {
+  const r = release({ ...PUBLIC_OK, env: { ...PUBLIC_OK.env, GH_REPO: 'someone/else' } });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, /GH_REPO is 'someone\/else'/);
+  assert.ok(!r.calls.some((c) => c.startsWith('gh release create')), r.trace);
 });
 
 test('release-public refuses a VERSION already on GHCR unless PUBLIC_RESUME=1 is on the command line', () => {
