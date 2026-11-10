@@ -82,10 +82,11 @@ exec ${REAL_GIT} "$@"
 `;
 
 // tag: true (annotated, at HEAD, pushed to origin) | 'local' (at HEAD, never pushed) | false
-function sandbox({ tag = true, registry = 'reg.test', local } = {}) {
+// sub: the checkout's path under the sandbox (a path with spaces, say).
+function sandbox({ tag = true, registry = 'reg.test', local, sub = 'luxmark' } = {}) {
   const parent = mkdtempSync(join(tmpdir(), 'luxmark-release-'));
-  const dir = join(parent, 'luxmark');
-  mkdirSync(dir);
+  const dir = join(parent, sub);
+  mkdirSync(dir, { recursive: true });
   copyFileSync(join(root, 'Makefile'), join(dir, 'Makefile'));
   // The topology lives where the real repo keeps it: a gitignored Makefile.local. The block refuses a
   // REGISTRY from the shell or the command line, so it can only come from here.
@@ -116,8 +117,8 @@ function sandbox({ tag = true, registry = 'reg.test', local } = {}) {
   return { parent, dir };
 }
 
-function release({ manifest = 'notfound', scan = 'pass', plats = 'both', tag = true, setup = () => {}, args = [], fromParent = false, env = {}, target = 'release', registry = 'reg.test', failStatus = false, local } = {}) {
-  const sb = sandbox({ tag, registry, local });
+function release({ manifest = 'notfound', scan = 'pass', plats = 'both', tag = true, setup = () => {}, args = [], fromParent = false, env = {}, target = 'release', registry = 'reg.test', failStatus = false, local, sub } = {}) {
+  const sb = sandbox({ tag, registry, local, sub });
   setup(sb);
   if (failStatus) {
     writeFileSync(join(sb.parent, 'git'), FAILING_STATUS_GIT);
@@ -419,6 +420,47 @@ test('a make database that cannot be read refuses the run (never reads as "no .I
   assert.notEqual(r.status, 0, r.out);
   assert.match(r.out, /could not read make's database/);
   assert.equal(builds(r.calls).length, 0, r.trace);
+});
+
+test('a .IGNORE that Makefile.local declares only for the goals given is refused, and nothing reaches the node', () => {
+  const scoped = 'ifneq ($(filter prod-%,$(MAKECMDGOALS)),)\n.IGNORE: prod-deploy\nendif\n';
+  const r = release({ target: 'prod-deploy', local: `${PROD_LOCAL}${scoped}`, setup: fakeRemote });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, IGNORED);
+  assert.deepEqual(r.calls.filter((c) => c.startsWith('ssh')), [], r.trace);
+});
+
+test('a .IGNORE in a site makefile the environment names is refused, and nothing reaches the node', () => {
+  const setup = (sb) => { fakeRemote(sb); writeFileSync(join(sb.parent, 'site.mk'), '.IGNORE: prod-deploy\n'); };
+  const r = release({ target: 'prod-deploy', local: `${PROD_LOCAL}-include $(LUXMARK_SITE_MK)\n`, setup, env: { LUXMARK_SITE_MK: '../site.mk' } });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, IGNORED);
+  assert.deepEqual(r.calls.filter((c) => c.startsWith('ssh')), [], r.trace);
+});
+
+test('make -I <dir> prod-deploy with a .IGNORE in <dir>/Makefile.local is refused, and nothing reaches the node', () => {
+  const setup = (sb) => {
+    fakeRemote(sb);
+    mkdirSync(join(sb.parent, 'conf'));
+    writeFileSync(join(sb.parent, 'conf', 'Makefile.local'), `${PROD_LOCAL}.IGNORE: prod-deploy\n`);
+  };
+  const r = release({ target: 'prod-deploy', local: null, args: ['-I', '../conf'], setup });
+  assert.notEqual(r.status, 0, r.out);
+  assert.match(r.out, IGNORED);
+  assert.deepEqual(r.calls.filter((c) => c.startsWith('ssh')), [], r.trace);
+});
+
+for (const sub of ['a b/luxmark', 'a  b/luxmark']) {
+  test(`make lint runs in a checkout whose path is "${sub}"`, () => {
+    const r = release({ target: 'lint', sub });
+    assert.equal(r.status, 0, r.out);
+  });
+}
+
+test('make lint runs with a required Makefile.local include generated from the caller\'s environment', () => {
+  const local = `${LOCAL}include site.mk\nsite.mk:\n\t@test -n "$$SITE_NODE" && printf 'SITE := %s\\n' "$$SITE_NODE" > $@\n`;
+  const r = release({ target: 'lint', local, env: { SITE_NODE: 'node-a' } });
+  assert.equal(r.status, 0, r.out);
 });
 
 test('other special targets in Makefile.local leave a release alone', () => {
