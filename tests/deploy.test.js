@@ -37,9 +37,10 @@ if [ -n "$LIVEJSON" ]; then printf '%s' "$LIVEJSON"; else printf '{"app":"luxmar
 `,
 };
 
-function run(target, { published = 'yes', live = VERSION, liveJson = '', curlFail = '', local = true, node = () => {}, args = [], fakes = {} } = {}) {
+// nodeDir: the node's PROD_DIR under the sandbox (a path with a space, say).
+function run(target, { published = 'yes', live = VERSION, liveJson = '', curlFail = '', local = true, node = () => {}, args = [], fakes = {}, nodeDir = 'node' } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'luxmark-deploy-'));
-  const prodDir = join(dir, 'node');
+  const prodDir = join(dir, nodeDir);
   spawnSync('mkdir', ['-p', prodDir]);
   node(prodDir);
   for (const f of ['Makefile', 'compose.yml', 'VERSION']) copyFileSync(join(root, f), join(dir, f));
@@ -147,6 +148,16 @@ test('a rollback to a release whose version.json has no top-level commit still v
   const r = run('prod-deploy', { args: ['MANUAL_VERSION=1.0.5'], liveJson: '{"app":"luxmark","version":"1.0.5","git":{"branch":"main","commit":"n/a"}}' });
   assert.equal(r.status, 0, r.out);
   assert.match(r.out, /live: .* serves 1\.0\.5/);
+});
+
+test('a PROD_DIR with a space is synced and deployed there, not to its first word', () => {
+  for (const target of ['prod-sync', 'prod-deploy']) {
+    const r = run(target, { nodeDir: 'my node' });
+    assert.equal(r.status, 0, r.out);
+    assert.equal(readFileSync(join(r.prodDir, 'compose.yml'), 'utf8'), readFileSync(join(root, 'compose.yml'), 'utf8'), `${target}: ${r.out}`);
+    assert.deepEqual(readdirSync(r.dir).filter((f) => f === 'my' || f === 'node'), [], `${target} wrote outside PROD_DIR`);
+    if (target === 'prod-deploy') assert.match(readFileSync(join(r.prodDir, '.env'), 'utf8'), new RegExp(`^TAG=${VERSION.replace(/\./g, '\\.')}$`, 'm'));
+  }
 });
 
 test('the prod targets refuse to run without the node topology in Makefile.local', () => {

@@ -2091,7 +2091,7 @@ PROD_REQUIRE_SH = if [ -z "$(PROD_JUMP)" ] || [ -z "$(PROD_NODE)" ] || [ -z "$(P
 # stray compose.yaml is moved to a timestamped name (`mv -n`), so no earlier copy is ever overwritten.
 PROD_SYNC_SH = b64=$$(base64 < compose.yml | tr -d '\n'); sum=$$(sha256sum compose.yml | cut -d' ' -f1); \
   [ -n "$$b64" ] && [ -n "$$sum" ] || { echo '$(RED)REFUSING: could not encode compose.yml locally$(NC)'; exit 1; }; \
-  printf '%s\n' 'set -e' 'mkdir -p $(PROD_DIR)' 'cd $(PROD_DIR)' \
+  printf '%s\n' 'set -e' 'mkdir -p "$(PROD_DIR)"' 'cd "$(PROD_DIR)"' \
     "echo $$b64 | base64 -d > compose.yml.new" \
     "echo '$$sum  compose.yml.new' | sha256sum -c --quiet -" \
     'mv compose.yml.new compose.yml' \
@@ -2115,7 +2115,7 @@ prod-deploy: require-prod ## Pin the node to :$(VERSION), pull, recreate, wait h
 	  echo '$(RED)REFUSING: $(GHCR_IMAGE):$(VERSION) is not published (run the release first): '"$$out"'$(NC)'; exit 1; }; \
 	$(PROD_SYNC_SH); \
 	echo '$(BLUE)Deploying $(GHCR_IMAGE):$(VERSION) to $(PROD_NODE):$(PROD_DIR)...$(NC)'; \
-	printf '%s\n' 'set -e' 'cd $(PROD_DIR)' 'touch .env' \
+	printf '%s\n' 'set -e' 'cd "$(PROD_DIR)"' 'touch .env' \
 	  'grep -v "^TAG=" .env > .env.new || true' \
 	  'printf "TAG=%s\n" "$(VERSION)" >> .env.new' \
 	  'mv .env.new .env' \
@@ -2126,10 +2126,10 @@ prod-deploy: require-prod ## Pin the node to :$(VERSION), pull, recreate, wait h
 	  *) echo '$(RED)DEPLOY NOT LIVE: $(PROD_URL)/version.json reports "'"$$got"'", expected $(VERSION)$(NC)'; exit 1;; esac
 
 prod-ps: require-prod ## Prod stack status (on the node)
-	@printf '%s\n' 'cd $(PROD_DIR) && $(PROD_COMPOSE) ps' | $(PROD_SH)
+	@printf '%s\n' 'cd "$(PROD_DIR)" && $(PROD_COMPOSE) ps' | $(PROD_SH)
 
 prod-logs: require-prod ## Tail prod logs (on the node; Ctrl-C to stop)
-	ssh -t $(PROD_JUMP) "ssh -t root@$(PROD_NODE) 'cd $(PROD_DIR) && $(PROD_COMPOSE) logs -f --tail 100'"
+	ssh -t $(PROD_JUMP) "ssh -t root@$(PROD_NODE) 'cd \"$(PROD_DIR)\" && $(PROD_COMPOSE) logs -f --tail 100'"
 
 prod-health: require-prod ## The container's own healthcheck plus what the live site serves
 	@printf '%s\n' 'docker inspect -f "luxmark-web: {{.State.Status}} {{.State.Health.Status}} {{.Config.Image}}" luxmark-web' | $(PROD_SH)
