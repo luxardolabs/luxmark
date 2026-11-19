@@ -35,7 +35,8 @@ docker compose down
 
 ```nginx
 server {
-    listen 443 ssl http2;
+    listen 443 ssl;
+    http2 on;
     server_name luxmark.yourdomain.com;
 
     ssl_certificate /path/to/cert.pem;
@@ -56,7 +57,7 @@ server {
 ```yaml
 services:
   luxmark:
-    build: .
+    image: ghcr.io/luxardolabs/luxmark:2026.11.0
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.luxmark.rule=Host(`luxmark.yourdomain.com`)"
