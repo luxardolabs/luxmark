@@ -42,7 +42,7 @@ server {
     ssl_certificate_key /path/to/key.pem;
 
     location / {
-        proxy_pass http://localhost:8080;
+        proxy_pass http://luxmark:8080;   # nginx on the same docker network (EDGE_NETWORK); with `docker run -p`, 127.0.0.1:<port>
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -131,7 +131,7 @@ docker build --no-cache -t luxmark .
 sed -i 's/^TAG=.*/TAG=2026.11.0/' .env
 docker compose pull
 docker compose up -d --wait
-curl -s http://localhost:8080/version.json   # should report the new version
+docker exec luxmark-web wget -qO- http://127.0.0.1:8080/version.json   # should report the new version
 ```
 
 Maintainers release with `make release`, then `make release-public`, which publishes the version and `:latest` to GHCR and then the GitHub Release, so a Release never names a version you cannot pull. They then deploy the hosted site with `make prod-deploy` (see the Makefile's Production section). Every release is a new, newest CalVer version, so `:latest` moves with each one.

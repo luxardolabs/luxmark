@@ -183,8 +183,8 @@ PLATFORMS        := $(PLATFORM)
 BUILD_CONTEXT    := .
 DOCKERFILE       := Dockerfile
 BUILD_ARGS       := --build-arg BUILD_VERSION=$(VERSION) --build-arg BUILD_TIMESTAMP=$(BUILD_DATE) --build-arg BUILD_COMMIT=$(BUILD_COMMIT)
-# The dev stack runs on the dev host, an ssh alias every coding machine resolves (compose.override.yml
-# puts it on the dev edge). `make dev-deploy` from the main checkout builds, pushes and starts it there.
+# The dev stack runs on the dev host, an ssh alias every coding machine resolves (.env.dev's
+# EDGE_NETWORK and EDGE_IPV4 put it on the dev edge). `make dev-deploy` from the main checkout builds, pushes and starts it there.
 DEV_HOST := devhost
 # The smoke probe `dev-deploy` ends with (below the image block): the stack's dev name, through the
 # edge. /version.json names the build's commit; the container is the one compose.yml runs. No Python,
@@ -2150,7 +2150,7 @@ serve: ## Run the container locally on :8080 (was `make test` — that name now 
 test-compose: ## Test with docker compose
 	@echo '$(BLUE)Starting $(PROJECT_NAME) with docker compose...$(NC)'
 	@docker compose up -d
-	@echo '$(GREEN)Services started. Access at http://localhost:8080$(NC)'
+	@echo '$(GREEN)Services started: luxmark:8080 on the edge network, no host port (make serve publishes one)$(NC)'
 	@echo 'Stop with: make stop-compose'
 
 .PHONY: stop-compose
