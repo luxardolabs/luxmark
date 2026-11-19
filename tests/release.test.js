@@ -620,8 +620,33 @@ test('local agent files are kept out of the build context at any depth', () => {
   // Claude Code reads a CLAUDE.md or .claude/ in any directory, and the owner keeps them out of git;
   // a root-only pattern lets src/js/CLAUDE.md reach the image through `COPY src/js/`.
   const docker = new Set(readFileSync(join(root, '.dockerignore'), 'utf8').split('\n').map((l) => l.trim()));
-  const missing = ['**/CLAUDE.md', '**/AGENTS.md', '**/.claude/', '**/Makefile.local'].filter((p) => !docker.has(p));
+  const missing = ['**/CLAUDE.md', '**/CLAUDE.local.md', '**/AGENTS.md', '**/.claude/', '**/Makefile.local'].filter((p) => !docker.has(p));
   assert.deepEqual(missing, [], 'add these to .dockerignore');
+});
+
+// Every source a COPY or ADD names: flags dropped, every word but the destination, shell or JSON form.
+function dockerfileSources(text) {
+  return text.replace(/\\\n/g, ' ').split('\n').map((l) => l.trim())
+    .filter((l) => /^(COPY|ADD)\s/i.test(l))
+    .flatMap((l) => {
+      const rest = l.replace(/^\S+\s+/, '');
+      const words = rest.startsWith('[') ? JSON.parse(rest) : rest.split(/\s+/);
+      return words.filter((w) => !w.startsWith('--')).slice(0, -1);
+    });
+}
+
+test('dockerfileSources reads every source of a COPY or ADD', () => {
+  const text = [
+    'COPY docker/a.conf /etc/',
+    'COPY --chown=nginx:nginx docker/b.conf /etc/',
+    'COPY docker/c.conf docker/d.conf /etc/',
+    'ADD --link docker/e.conf \\',
+    '    /etc/',
+    'COPY ["docker/f.conf", "/etc/"]',
+    'COPY --from=build /out /usr/share/',
+  ].join('\n');
+  assert.deepEqual(dockerfileSources(text).filter((s) => s.startsWith('docker/')),
+    ['docker/a.conf', 'docker/b.conf', 'docker/c.conf', 'docker/d.conf', 'docker/e.conf', 'docker/f.conf']);
 });
 
 test('the build context holds only the docker/ files the Dockerfile copies', () => {
@@ -629,7 +654,7 @@ test('the build context holds only the docker/ files the Dockerfile copies', () 
   // context takes docker/ as an allowlist of exactly what the image needs.
   const lines = readFileSync(join(root, '.dockerignore'), 'utf8').split('\n').map((l) => l.trim());
   assert.ok(lines.includes('docker/*'), 'exclude docker/* in .dockerignore');
-  const copied = [...readFileSync(join(root, 'Dockerfile'), 'utf8').matchAll(/^COPY\s+(docker\/\S+)/gm)].map((m) => m[1]);
+  const copied = [...new Set(dockerfileSources(readFileSync(join(root, 'Dockerfile'), 'utf8')).filter((s) => s.startsWith('docker/')))];
   assert.ok(copied.length > 0, 'the Dockerfile copies from docker/');
   const allowed = lines.filter((l) => l.startsWith('!docker/')).map((l) => l.slice(1));
   assert.deepEqual(allowed.sort(), copied.sort(), 'allow exactly the docker/ files the Dockerfile copies');

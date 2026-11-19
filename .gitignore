@@ -72,3 +72,6 @@ Makefile.local
 # Claude Code hook session state (luxarch --emit hooks)
 .claude/.luxpm-path-searches.json
 .claude/.luxpm-hold-notices.json
+
+# Claude Code personal instructions: local only, never in the public repo
+CLAUDE.local.md

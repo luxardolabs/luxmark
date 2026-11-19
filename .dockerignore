@@ -12,6 +12,7 @@ LICENSE
 # Agent instructions and tooling, kept local at any depth (CLAUDE.md is untracked and names internal
 # hosts). The build context is the checkout root, and `COPY src/js/` takes whole directories.
 **/CLAUDE.md
+**/CLAUDE.local.md
 **/AGENTS.md
 **/.claude/
 **/Makefile.local
