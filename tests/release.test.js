@@ -11,7 +11,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -624,14 +624,21 @@ test('local agent files are kept out of the build context at any depth', () => {
   assert.deepEqual(missing, [], 'add these to .dockerignore');
 });
 
-// Every source a COPY or ADD names: flags dropped, every word but the destination, shell or JSON form.
+// Every build-context source a COPY or ADD names, as Docker reads the Dockerfile: comment lines
+// dropped before continuations join, flags dropped, shell or JSON form, every word but the
+// destination, a leading ./ removed. A COPY --from reads another stage, not the context.
 function dockerfileSources(text) {
-  return text.replace(/\\\n/g, ' ').split('\n').map((l) => l.trim())
+  return text.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n')
+    .replace(/\\\n/g, ' ').split('\n').map((l) => l.trim())
     .filter((l) => /^(COPY|ADD)\s/i.test(l))
     .flatMap((l) => {
-      const rest = l.replace(/^\S+\s+/, '');
-      const words = rest.startsWith('[') ? JSON.parse(rest) : rest.split(/\s+/);
-      return words.filter((w) => !w.startsWith('--')).slice(0, -1);
+      const words = l.split(/\s+/).slice(1);
+      const flags = [];
+      while (words.length && words[0].startsWith('--')) flags.push(words.shift());
+      if (flags.some((f) => f.startsWith('--from'))) return [];
+      const rest = words.join(' ');
+      const args = rest.startsWith('[') ? JSON.parse(rest) : words;
+      return args.slice(0, -1).map((w) => w.replace(/^\.\//, ''));
     });
 }
 
@@ -643,21 +650,58 @@ test('dockerfileSources reads every source of a COPY or ADD', () => {
     'ADD --link docker/e.conf \\',
     '    /etc/',
     'COPY ["docker/f.conf", "/etc/"]',
-    'COPY --from=build /out /usr/share/',
+    'COPY --from=build docker/not-context.conf /usr/share/',
+    'COPY ./docker/g.conf /etc/',
+    'COPY --chown=nginx:nginx ["docker/h.conf", "/etc/"]',
+    'COPY docker/i.conf \\',
+    '# a comment inside the continued instruction',
+    '    docker/j.conf /etc/',
+    '# a comment that ends in a backslash \\',
+    'COPY docker/k.conf /etc/',
   ].join('\n');
   assert.deepEqual(dockerfileSources(text).filter((s) => s.startsWith('docker/')),
-    ['docker/a.conf', 'docker/b.conf', 'docker/c.conf', 'docker/d.conf', 'docker/e.conf', 'docker/f.conf']);
+    ['docker/a.conf', 'docker/b.conf', 'docker/c.conf', 'docker/d.conf', 'docker/e.conf', 'docker/f.conf',
+      'docker/g.conf', 'docker/h.conf', 'docker/i.conf', 'docker/j.conf', 'docker/k.conf']);
+});
+
+// What is wrong with the docker/ allowlist: it must name exactly the single files the Dockerfile
+// copies from docker/. A directory or glob entry admits whatever local file sits under it.
+function dockerAllowlistProblems(ignoreText, dockerfileText, isDir) {
+  const lines = ignoreText.split('\n').map((l) => l.trim());
+  const problems = [];
+  if (!lines.includes('docker/*')) problems.push('exclude docker/* in .dockerignore');
+  const allowed = lines.filter((l) => l.startsWith('!docker/')).map((l) => l.slice(1));
+  const copied = [...new Set(dockerfileSources(dockerfileText).filter((s) => s.startsWith('docker/')))];
+  if (copied.length === 0) problems.push('the Dockerfile copies nothing from docker/');
+  for (const p of [...allowed, ...copied]) {
+    if (/[*?[]/.test(p) || p.endsWith('/') || isDir(p)) problems.push(`${p}: a directory or glob, not one file`);
+  }
+  const a = [...allowed].sort().join('\n');
+  const c = [...copied].sort().join('\n');
+  if (a !== c) problems.push(`allowlist ${JSON.stringify(allowed)} is not the Dockerfile's docker/ sources ${JSON.stringify(copied)}`);
+  return problems;
+}
+
+test('a docker/ directory or glob in the Dockerfile and the allowlist is refused', () => {
+  const ignore = 'docker/*\n!docker/conf.d/\n';
+  const dockerfile = 'COPY docker/conf.d/ /etc/nginx/conf.d/\n';
+  assert.notDeepEqual(dockerAllowlistProblems(ignore, dockerfile, () => false), []);
+  const bare = 'docker/*\n!docker/conf.d\n';
+  const bareCopy = 'COPY docker/conf.d /etc/nginx/conf.d/\n';
+  assert.notDeepEqual(dockerAllowlistProblems(bare, bareCopy, (p) => p === 'docker/conf.d'), []);
+  const glob = 'docker/*\n!docker/*.conf\n';
+  assert.notDeepEqual(dockerAllowlistProblems(glob, 'COPY docker/*.conf /etc/\n', () => false), []);
+  // Control: one exact file on both sides.
+  assert.deepEqual(dockerAllowlistProblems('docker/*\n!docker/a.conf\n', 'COPY docker/a.conf /etc/\n', () => false), []);
 });
 
 test('the build context holds only the docker/ files the Dockerfile copies', () => {
   // docker/ also holds local-only config (production site files) that git never sees, so the
   // context takes docker/ as an allowlist of exactly what the image needs.
-  const lines = readFileSync(join(root, '.dockerignore'), 'utf8').split('\n').map((l) => l.trim());
-  assert.ok(lines.includes('docker/*'), 'exclude docker/* in .dockerignore');
-  const copied = [...new Set(dockerfileSources(readFileSync(join(root, 'Dockerfile'), 'utf8')).filter((s) => s.startsWith('docker/')))];
-  assert.ok(copied.length > 0, 'the Dockerfile copies from docker/');
-  const allowed = lines.filter((l) => l.startsWith('!docker/')).map((l) => l.slice(1));
-  assert.deepEqual(allowed.sort(), copied.sort(), 'allow exactly the docker/ files the Dockerfile copies');
+  const isDir = (p) => existsSync(join(root, p)) && statSync(join(root, p)).isDirectory();
+  const problems = dockerAllowlistProblems(readFileSync(join(root, '.dockerignore'), 'utf8'),
+    readFileSync(join(root, 'Dockerfile'), 'utf8'), isDir);
+  assert.deepEqual(problems, []);
 });
 
 const anyPush = (calls) => builds(calls).concat(promotions(calls), pushes(calls));
