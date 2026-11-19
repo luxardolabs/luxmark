@@ -37,9 +37,9 @@ endif
 # PUBLIC, so no internal registry host is inlined here — the fleet gitleaks disclosure tier enforces
 # that, and a clean clone still builds/lints because every recipe references the var, not a value.
 LUX_REGISTRY     ?=
-LUXARCH_VERSION  := 0.359.0
-LUXLINT_VERSION  := 0.77.0
-LUXAUDIT_VERSION := 0.17.0
+LUXARCH_VERSION  := 0.372.0
+LUXLINT_VERSION  := 0.81.0
+LUXAUDIT_VERSION := 0.20.0
 LUXARCH_IMAGE    := $(LUX_REGISTRY)/luxardolabs/luxarch:$(LUXARCH_VERSION)
 LUXLINT_IMAGE    := $(LUX_REGISTRY)/luxardolabs/luxlint:$(LUXLINT_VERSION)
 override LUXAUDIT_IMAGE := $(LUX_REGISTRY)/luxardolabs/luxaudit:$(LUXAUDIT_VERSION)
@@ -281,7 +281,7 @@ override sq = $(if $(findstring $(IB_NL),$(1)),$(error REFUSING: a value a block
 override sqw = $(foreach w,$(1),$(call sq,$(w)))
 # luxarch:build-core end - DO NOT edit this marker line: the image block's runtime guard reads its range.
 
-# luxarch:image-block asset v24 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit image-block`.
+# luxarch:image-block asset v29 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit image-block`.
 # ── Images: ONE naming scheme, and the NAME declares what the image IS ──────────────────────────
 # Emitted by `luxarch --emit image-block`. Two axes, both readable from the name alone:
 #
@@ -369,7 +369,7 @@ override CANDIDATE     := $(IMAGE):candidate-$(COMMIT)
 # v17: the make INVOCATION is judged too. Every name the block sets is `override`, so a command-line
 # value of one (silently ignored) refuses, as do `make -e`, `--eval`, MAKEFILES and MAKEFILE_LIST from
 # outside; and the makefile make read FIRST must be this directory's default one (no `-f <wrapper>`).
-# A stated limit: a makefile reading a file through HOME or PATH reads it in the clean evaluation too.
+# A makefile reading a file through HOME or PATH reads it in the clean evaluation too.
 override define require_make_inputs
 $(strip $(foreach w,$(MAKEOVERRIDES),$(if $(filter override,$(origin $(firstword $(subst :, ,$(subst =, ,$(w)))))),echo "REFUSING: $(firstword $(subst :, ,$(subst =, ,$(w)))) is set from the command line but the makefile defines it itself (an override): the image block refuses a value it would ignore"; exit 1; )))$(if $(filter-out --%,$(firstword $(MAKEFLAGS))),$(if $(findstring e,$(firstword $(MAKEFLAGS))),echo "REFUSING: make -e lets the environment override the makefile's own values: run make without -e"; exit 1; ))$(if $(filter --eval=%,$(MAKEFLAGS)),echo "REFUSING: make was run with --eval: it adds makefile text nobody committed. Run it without"; exit 1; )$(if $(filter-out file,$(origin MAKEFILE_LIST)),echo "REFUSING: MAKEFILE_LIST is set from outside the makefile"; exit 1; )\
 [ -z $(call sq,$(strip $(MAKEFILES))) ] || { \
@@ -590,6 +590,12 @@ endef
 # Build caching is unchanged: BuildKit and the classic builder key a COPY on file content, not on the
 # path or mtime of the context, so an unchanged layer still hits the cache. The cost is one checkout
 # of the tree per publish, in TMPDIR.
+# Every temporary file or directory the block makes is removed by an EXIT trap, and that trap and each
+# HUP/INT/TERM trap first set those three signals to ignored. make passes a signal it gets on to the
+# recipe shell, so a signal to the whole process group (a Ctrl-C, a `kill` of the group) reaches the
+# shell twice, and the second can land while it handles the first; left trapped, it runs `exit` again
+# inside the cleanup and the shell ends before removing anything. The ignore is inherited, so the
+# `rm` the cleanup starts is not killed by it either.
 override define export_tree
 for v in $$(env | sed -n -e 's/^\(GIT_CONFIG_KEY_[0-9][0-9]*\)=.*/\1/p' -e 's/^\(GIT_CONFIG_VALUE_[0-9][0-9]*\)=.*/\1/p'); do unset "$$v"; done; \
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE \
@@ -599,7 +605,7 @@ head=$$(git -C $(call sq,$(CURDIR)) rev-parse --verify HEAD) && short=$$(git -C 
   echo "REFUSING: git cannot name this checkout's commit, so there is nothing to build from"; exit 1; }; \
 [ "$$short" = $(call sq,$(COMMIT)) ] || { \
   echo "REFUSING: this checkout is at $$short, but the image would be tagged sha-"$(call sq,$(COMMIT))": $(if $(filter command line environment%,$(origin COMMIT)),COMMIT="$(call sq,$(COMMIT))" was set $(if $(findstring command,$(origin COMMIT)),on the command line,in the environment); do not set it,a GIT_DIR / GIT_WORK_TREE (or another GIT_*) variable pointed make at another repository; unset it). sha-<commit> names the commit it is built from."; exit 1; }; \
-ctxdir=$$(mktemp -d); trap '[ -z "$$ctxdir" ] || rm -rf "$$ctxdir"' EXIT; trap 'exit 1' HUP INT TERM; \
+ctxdir=$$(mktemp -d); trap 'trap "" HUP INT TERM; [ -z "$$ctxdir" ] || rm -rf "$$ctxdir"' EXIT; trap 'trap "" HUP INT TERM; exit 1' HUP INT TERM; \
 : > "$$ctxdir/empty"; \
 xgit() { GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$$ctxdir/empty" git -c core.attributesFile="$$ctxdir/empty" -c core.hooksPath="$$ctxdir/no-hooks" -c advice.detachedHead=false "$$@"; }; \
 xgit clone -q --no-checkout --shared "$$top" "$$ctxdir/src" && \
@@ -716,7 +722,7 @@ endef
 override define scan_candidate
 set -e; ref=$(call sq,$(or $(LUXAUDIT_IMAGE),$(LUXAUDIT))); \
 if [ -z "$$ref" ]; then echo "REFUSING: set LUXAUDIT_IMAGE to the pinned luxaudit; the candidate must be scanned before it is pushed"; exit 2; fi; \
-T=$$(mktemp); trap 'rm -f "$$T"; [ -z "$${ctxdir:-}" ] || rm -rf "$$ctxdir"' EXIT; trap 'exit 1' HUP INT TERM; \
+T=$$(mktemp); trap 'trap "" HUP INT TERM; rm -f "$$T"; [ -z "$${ctxdir:-}" ] || rm -rf "$$ctxdir"' EXIT; trap 'trap "" HUP INT TERM; exit 1' HUP INT TERM; \
 docker save $(call sq,$(1)) -o "$$T"; chmod 644 "$$T"; \
 docker run --rm -v $(call sq,$(CURDIR)):/repo -v luxaudit-cache:/root/.cache/trivy -v "$$T":/candidate.tar:ro \
   "$$ref" --image-archive /candidate.tar --image-label $(call sq,$(1))
@@ -742,7 +748,7 @@ set -e; ref=$(call sq,$(or $(LUXAUDIT_IMAGE),$(LUXAUDIT))); \
 if [ -z "$$ref" ]; then echo "REFUSING: set LUXAUDIT_IMAGE to the pinned luxaudit; the image must be scanned before it is promoted"; exit 2; fi; \
 $(or $(3),h)=$$(docker buildx imagetools inspect $(call sq,$(1)) --format '{{.Manifest.Digest.Encoded}}'); \
 case "$$$(or $(3),h)" in ''|*[!0-9a-f]*) echo "REFUSING: could not read the digest of "$(call sq,$(1))"; nothing is promoted"; exit 1 ;; esac; \
-pr=$(call sq,$(2)); T=$$(mktemp); trap 'rm -f "$$T"; [ -z "$${ctxdir:-}" ] || rm -rf "$$ctxdir"; docker image rm "$$pr@sha256:$$$(or $(3),h)" >/dev/null 2>&1 || true' EXIT; trap 'exit 1' HUP INT TERM; \
+pr=$(call sq,$(2)); T=$$(mktemp); trap 'trap "" HUP INT TERM; rm -f "$$T"; [ -z "$${ctxdir:-}" ] || rm -rf "$$ctxdir"; ( trap - HUP INT TERM; exec docker image rm "$$pr@sha256:$$$(or $(3),h)" ) >/dev/null 2>&1 || true' EXIT; trap 'trap "" HUP INT TERM; exit 1' HUP INT TERM; \
 $(foreach p,$(or $(PLATFORM_LIST),host),docker image rm $(call sq,$(2))@sha256:$$$(or $(3),h) >/dev/null 2>&1 || true; docker pull -q $(if $(filter-out host,$(p)),--platform $(call sq,$(p)) )$(call sq,$(2))@sha256:$$$(or $(3),h); docker save $(if $(filter-out host,$(p)),--platform $(call sq,$(p)) )$(call sq,$(2))@sha256:$$$(or $(3),h) -o "$$T"; chmod 644 "$$T"; docker run --rm -v $(call sq,$(CURDIR)):/repo -v luxaudit-cache:/root/.cache/trivy -v "$$T":/candidate.tar:ro "$$ref" --image-archive /candidate.tar --image-label $(call sq,$(1) ($(p))); )$(if $(3),rm -f "$$T"; docker image rm $(call sq,$(2))@sha256:$$$(3) >/dev/null 2>&1 || true; )
 endef
 
@@ -955,7 +961,7 @@ $(call refuse_published,$(call img_version,$(1)),Bump VERSION for a new release;
 $(call refuse_published,$(call img_public,$(1)),A released version is immutable on the public registry too: bump VERSION.))
 endef
 
-release: $(if $(PLATFORM_LIST),buildx-setup) ## Cut VERSION: build + scan + PUSH :$(VERSION), then the GitHub Release (refuses an already-released VERSION)
+release: $(if $(PLATFORM_LIST),buildx-setup) ## Cut VERSION: build + scan + PUSH :$(VERSION), then the GitHub Release, which `release-public` publishes instead when PUBLIC_REGISTRY is set (refuses an already-released VERSION)
 	@$(ib_run_snap)$(if $(and $(value sq),$(value sqw),$(value img_dockerfile)),,$(error REFUSING: the image block (v18) builds with the build core's quoting and image helpers (sq, sqw, img_*), which this makefile does not define. Paste `luxarch --emit build-core` directly above the image block))$(if $(value gh_release_publish),,$(error REFUSING: the image block (v24) publishes its GitHub Release with the gh-release block (gh_release_preflight, gh_release_publish), which this makefile does not define. Paste `luxarch --emit gh-release` directly below the image block))set -e; set -f; $(if $(filter-out default,$(origin MAKE_COMMAND)),echo "REFUSING: MAKE_COMMAND is set from outside the makefile"; exit 1; )$(if $(strip $(MAKEFILES)),echo "REFUSING: MAKEFILES is set so make read makefiles before this one that nobody committed or named: unset it"; exit 1; )$(if $(filter-out file,$(origin MAKEFILE_LIST)),echo "REFUSING: MAKEFILE_LIST is set from outside the makefile"; exit 1; )$(if $(filter-out default undefined,$(origin MAKECMDGOALS)),echo "REFUSING: MAKECMDGOALS is set from outside the makefile"; exit 1; )$(if $(filter command% environment%,$(origin SHELL) $(origin .SHELLFLAGS)),echo "REFUSING: SHELL or .SHELLFLAGS comes from the command line or the environment: the recipe would run in another shell"; exit 1; )$(if $(findstring x,$(filter-out --%,$(filter -%,$(.SHELLFLAGS)))),echo "REFUSING: .SHELLFLAGS traces the recipe (-x) and would print every value spliced into it"; exit 1; )\
 	[ -z "$${BASH_ENV:-}$${ENV:-}" ] || { echo "REFUSING: BASH_ENV or ENV is set: a shell startup file ran before this recipe"; exit 1; }; case $$- in *x*) echo "REFUSING: the recipe shell traces its commands (-x) and would print every value spliced into it"; exit 1 ;; esac; \
 	ib_dm=; for m in GNUmakefile makefile Makefile; do if [ -f "$$m" ]; then ib_dm=$$m; break; fi; done; \
@@ -1019,8 +1025,8 @@ override PUBLIC_LATEST_IMAGE := $(PUBLIC_REGISTRY)/$(if $(IMAGE_PRIMARY),$($(IMA
 # image whose public `:$(VERSION)` exists must hold the digest just rescanned and only its `:latest`
 # moves; an image whose public `:$(VERSION)` is absent is copied whole. Without it a public
 # `:$(VERSION)` refuses, as always. It is one run's choice on this make's own command line: another
-# origin, a parent make (MAKELEVEL) or an exported MAKEFLAGS naming it refuses. A stated limit: that
-# check reads make's starting environment in /proc, so a resume runs on Linux only.
+# origin, a parent make (MAKELEVEL) or an exported MAKEFLAGS naming it refuses. That check
+# reads make's starting environment in /proc, so a resume runs on Linux only.
 override IB_PUBLIC_RESUME = $(and $(filter command line,$(origin PUBLIC_RESUME)),$(filter 1,$(PUBLIC_RESUME)))
 override define public_resume_gate
 $(if $(filter-out undefined,$(origin PUBLIC_RESUME)),$(if $(filter-out command line,$(origin PUBLIC_RESUME)),echo "REFUSING: PUBLIC_RESUME is set in "$(call sq,$(origin PUBLIC_RESUME))": resuming a public copy is a choice for one run on the command line (make release-public PUBLIC_RESUME=1)"; exit 1; ,$(if $(IB_PUBLIC_RESUME),,echo "REFUSING: PUBLIC_RESUME="$(call sq,$(PUBLIC_RESUME))" is not 1"; exit 1; )))$(if $(IB_PUBLIC_RESUME),[ $(call sq,$(MAKELEVEL)) = 0 ] || { \
@@ -1057,7 +1063,7 @@ set -e; ref=$(call sq,$(or $(LUXAUDIT_IMAGE),$(LUXAUDIT))); \
 if [ -z "$$ref" ]; then echo "REFUSING: set LUXAUDIT_IMAGE to the pinned luxaudit; the image must be scanned before it is promoted"; exit 2; fi; \
 $(or $(3),h)=$$(docker buildx imagetools inspect $(call sq,$(1)) --format '{{.Manifest.Digest.Encoded}}'); \
 case "$$$(or $(3),h)" in ''|*[!0-9a-f]*) echo "REFUSING: could not read the digest of "$(call sq,$(1))"; nothing is promoted"; exit 1 ;; esac; \
-pr=$(call sq,$(2)); T=$$(mktemp); trap 'rm -f "$$T"; [ -z "$${ctxdir:-}" ] || rm -rf "$$ctxdir"; docker image rm "$$pr@sha256:$$$(or $(3),h)" >/dev/null 2>&1 || true' EXIT; trap 'exit 1' HUP INT TERM; \
+pr=$(call sq,$(2)); T=$$(mktemp); trap 'trap "" HUP INT TERM; rm -f "$$T"; [ -z "$${ctxdir:-}" ] || rm -rf "$$ctxdir"; ( trap - HUP INT TERM; exec docker image rm "$$pr@sha256:$$$(or $(3),h)" ) >/dev/null 2>&1 || true' EXIT; trap 'trap "" HUP INT TERM; exit 1' HUP INT TERM; \
 rev=$$(git rev-parse -q --verify $(call sq,refs/tags/v$(VERSION)^{commit}) 2>/dev/null) || { \
   echo "REFUSING: v"$(call sq,$(VERSION))" is not tagged in this checkout, so nothing names the commit "$(call sq,$(1))" must be (git fetch --tags)"; exit 1; }; \
 mt=$$(docker buildx imagetools inspect $(call sq,$(2))@sha256:$$$(or $(3),h) --format '{{.Manifest.MediaType}}') || { echo "REFUSING: could not read what "$(call sq,$(1))" holds; nothing is promoted"; exit 1; }; \
@@ -1178,7 +1184,7 @@ endif
 # the commit), refuses a mirror tag already published (immutable: bump MIRROR_VERSION), builds from
 # the commit with `--build-arg MIRROR_VERSION=<it>` (so the Dockerfile's `ARG MIRROR_VERSION` and the
 # tag are one value), scans it, and only then pushes `$(REGISTRY)/<name>:<MIRROR_VERSION>`. A stack or
-# a target pins MIRROR_IMAGE. `release` and `publish-sha` never touch it. A stated limit: it is built
+# a target pins MIRROR_IMAGE. `release` and `publish-sha` never touch it. It is built
 # for this host's architecture (PLATFORMS is the app's).
 MIRROR_VERSION       ?=
 MIRROR_IMAGE_NAME    ?=
@@ -1313,6 +1319,18 @@ DEV_FIELD_MANAGER ?=
 DEV_KUSTOMIZE ?= kubectl kustomize
 DEV_KUBECTL ?= kubectl
 
+# The compose dev stack's Docker host: exactly one `DEV_HOST := <host>` line in the committed
+# Makefile, an ssh alias every coding machine resolves (`DEV_HOST := devhost`), or `local`. `dev-pin`
+# and `smoke` reach it as `DOCKER_HOST=ssh://<DEV_HOST>` (`private`: dev-pin's prerequisites and
+# `publish-sha` stay on this machine). Before anything is written, dev-pin refuses unless its value
+# is that committed line (HEAD) exactly, and the dev host reads this checkout at the same path (a
+# probe file and the env file, compared by checksum over ssh). The stack publishes no host port
+# (`repo.dev_host_declared`). A DEV_HOST from the shell is ignored; `local` is this shell's docker.
+DEV_HOST ?=
+override IB_DEV_HOST = $(if $(filter file override,$(origin DEV_HOST)),$(strip $(DEV_HOST)))
+override IB_AMBIENT_DOCKER_HOST := $(DOCKER_HOST)
+dev-pin smoke: private export DOCKER_HOST = $(if $(filter-out local,$(IB_DEV_HOST)),ssh://$(IB_DEV_HOST),$(IB_AMBIENT_DOCKER_HOST))
+
 # v15: a file with more than one `TAG=` line refuses. v14 rewrote the first, and compose reads the
 # LAST, so the stack stayed on the old version under a pin that reported success.
 # v14: one awk pass writes the file, and the rewrite is refused unless every line but `TAG=` is
@@ -1364,7 +1382,7 @@ umask 077; f=$(call sq,$(1)); t=$(call sq,$(2)); \
 [ -f "$$f" ] || { echo "$$f is missing — copy .env.example and fill it in first"; exit 1; }; \
 n=$$(grep -cE '^[[:space:]]*(export[[:space:]]+)?TAG[[:space:]]*=' "$$f" || true); \
 [ "$$n" -le 1 ] || { echo "refusing: $$f has more than one TAG= line ($$n; a line of a multi-line quoted value that starts with TAG= counts too), and compose reads the last: keep one (nothing written)"; exit 1; }; \
-tmp=$$(mktemp); trap 'rm -f "$$tmp" "$$tmp.err" "$$tmp.now" "$$tmp.boot" "$$tmp.a" "$$tmp.b" "$$tmp.probe.yml" "$$tmp.pb" "$$tmp.pn" "$$tmp.vb" "$$tmp.vn"; [ -z "$${pindir:-}" ] || rm -rf "$$pindir"' EXIT; trap 'exit 1' HUP INT TERM; \
+tmp=$$(mktemp); trap 'trap "" HUP INT TERM; rm -f "$$tmp" "$$tmp.err" "$$tmp.now" "$$tmp.boot" "$$tmp.a" "$$tmp.b" "$$tmp.probe.yml" "$$tmp.pb" "$$tmp.pn" "$$tmp.vb" "$$tmp.vn"; [ -z "$${pindir:-}" ] || rm -rf "$$pindir"; [ -z "$${rf:-}" ] || rm -f "$$rf"' EXIT; trap 'trap "" HUP INT TERM; exit 1' HUP INT TERM; \
 awk -v t="$$t" '/^[[:space:]]*(export[[:space:]]+)?TAG[[:space:]]*=/ && !d {print "TAG=" t; d=1; next} {print} END {if (!d) print "TAG=" t}' "$$f" > "$$tmp"; \
 [ -s "$$tmp" ] || { echo "refusing to write an empty $$f"; exit 1; }; \
 [ "$$(grep -vE '^[[:space:]]*(export[[:space:]]+)?TAG[[:space:]]*=' "$$f")" = "$$(grep -vE '^[[:space:]]*(export[[:space:]]+)?TAG[[:space:]]*=' "$$tmp")" ] || \
@@ -1458,7 +1476,7 @@ endef
 # with the variables that point it at a repository (GIT_DIR, GIT_WORK_TREE, …) unset, so one set
 # elsewhere cannot make a worktree read as the main checkout, and so is each superproject this
 # checkout is a submodule of: a submodule checked out inside a linked worktree is in that worktree.
-# A stated limit: a makefile is trusted code, and a recipe of its own that runs
+# A makefile is trusted code: a recipe of its own that runs
 # `$(MAKE) dev-pin DEV_DEPLOY_FROM_WORKTREE=1` passes the value as a command line.
 override define require_main_checkout
 case $(call sq,$(origin DEV_DEPLOY_FROM_WORKTREE)) in \
@@ -1485,8 +1503,11 @@ endef
 # v10: a deploy ends by probing what it deployed (`luxarch --emit smoke`, pasted below this block). A
 # deploy that restarted the stack is not one that works: the suite runs in-process and cannot see the
 # proxy, the server, the production image or a standalone entry point.
+# Before it builds or pushes anything, dev-deploy makes dev-pin's dev-host checks in its own recipe, in a
+# subshell: what they export never reaches the build, even under .ONESHELL.
 dev-deploy: ## Build+push THIS commit (:sha-…, never the version), pin $(DEV_ENV_FILE) to it, restart the dev stack, smoke it
 	@$(if $(filter none,$(DEV_DEPLOY)),:,$(require_main_checkout))
+	@$(if $(filter compose,$(DEV_DEPLOY)),( set -e; set -f; $(if $(filter-out local,$(IB_DEV_HOST)),DOCKER_HOST=ssh://$(call sq,$(IB_DEV_HOST)); export DOCKER_HOST; )ib_dm=; for m in GNUmakefile makefile Makefile; do if [ -f "$$m" ]; then ib_dm=$$m; break; fi; done; [ -n "$$ib_dm" ] || { echo "REFUSING: this directory has no default makefile"; exit 1; }; $(require_dev_env_file); $(require_dev_host); $(dev_host_same_files) ) || exit 1,:)
 	@$(if $(and $(value sq),$(value sqw),$(value img_dockerfile)),,$(error REFUSING: the image block (v18) builds with the build core's quoting and image helpers (sq, sqw, img_*), which this makefile does not define. Paste `luxarch --emit build-core` directly above the image block))$(if $(filter none,$(DEV_DEPLOY)),echo "REFUSING: "$(call sq,$(IB_NO_STACK)); exit 1,$(MAKE) --no-print-directory publish-sha)
 	@$(if $(filter none,$(DEV_DEPLOY)),:,$(MAKE) --no-print-directory dev-pin TAG=sha-$(call sq,$(COMMIT)))
 	@$(if $(filter none,$(DEV_DEPLOY)),:,$(MAKE) --no-print-directory smoke)
@@ -1536,7 +1557,7 @@ endef
 # (`apply -f -`), never as a local path. Each overlay is spelled one way (no `./`, `//` or trailing
 # `/`), so no overlay is applied twice under two spellings.
 override define dev_kustomize
-kd=$$(mktemp -d); trap 'rm -rf "$$kd"' EXIT; \
+kd=$$(mktemp -d); trap 'trap "" HUP INT TERM; rm -rf "$$kd"' EXIT; trap 'trap "" HUP INT TERM; exit 1' HUP INT TERM; \
 mkdir "$$kd/src" && git archive --format=tar HEAD | tar -x -C "$$kd/src" || { echo "REFUSING: could not export HEAD to render the dev overlays from"; exit 1; }; \
 kn=0; kall=; for ov in $(call sqw,$(DEV_PRE_OVERLAYS)) $(call sq,$(DEV_OVERLAY)); do \
   case "$$ov" in ''|-*|/*|*..*|*[!A-Za-z0-9._/-]*|.|./*|*/.|*/./*|*//*|*/) echo "REFUSING: DEV_OVERLAY and each of DEV_PRE_OVERLAYS must be one plain path inside the repo, spelled one way (letters, digits, . _ / -; no ./, //, /./ or trailing /), not $$ov"; exit 1 ;; esac; \
@@ -1577,6 +1598,40 @@ endef
 override define require_dev_env_file
 case $(call sq,$(DEV_ENV_FILE)) in ''|-*|*[!A-Za-z0-9._/-]*) \
   echo "REFUSING: DEV_ENV_FILE must be one plain path (letters, digits, . _ / -), not "$(call sq,$(DEV_ENV_FILE)); exit 1 ;; esac
+endef
+
+# DEV_HOST is empty, `local`, or one ssh destination `[user@]host` of plain characters: it becomes
+# `ssh://<it>`, so a space, an option or a path in it would point docker somewhere else.
+override define require_dev_host
+[ $(call sq,$(origin DEV_HOST)) != 'command line' ] || { echo "REFUSING: DEV_HOST is set on the command line: where the dev stack runs is the committed Makefile's DEV_HOST := line, never one run's choice"; exit 1; }; \
+case $(call sq,$(IB_DEV_HOST)) in ''|local) ;; \
+  -*|*@*@*|@*|*@|*[!A-Za-z0-9._@-]*) echo "REFUSING: DEV_HOST must be local or one ssh destination [user@]host (letters, digits, . _ -), not "$(call sq,$(DEV_HOST)); exit 1 ;; \
+  *) [ $(call sq,$(DEV_DEPLOY)) = compose ] || { echo "REFUSING: DEV_HOST is the compose dev lane's Docker host; DEV_DEPLOY is "$(call sq,$(DEV_DEPLOY))" (kustomize reaches its cluster through DEV_KUBECTL)"; exit 1; } ;; esac
+endef
+
+# The committed-line check, then (a host) the same-checkout check: see DEV_HOST above.
+override define dev_host_same_files
+dh_all=$$(git show "HEAD:./$$ib_dm" 2>/dev/null | grep -E '^[[:space:]]*(export[[:space:]]+|override[[:space:]]+)*DEV_HOST[[:space:]]*(::?=|:::=|\?=|\+=|!=|=)' | grep -vxE 'DEV_HOST[[:space:]]*\?=[[:space:]]*') || dh_all=; \
+dh_c=$$(printf '%s\n' "$$dh_all" | grep -E '^DEV_HOST[[:space:]]*:=') || dh_c=; \
+[ "$$(printf '%s\n' "$$dh_all" | grep -c 'DEV_HOST' || true)" = "$$(printf '%s\n' "$$dh_c" | grep -c 'DEV_HOST' || true)" ] || { echo "REFUSING: the committed $$ib_dm (HEAD) sets DEV_HOST with another form than DEV_HOST := <host> at the start of a line ($$(printf '%s\n' "$$dh_all" | grep -vE '^DEV_HOST[[:space:]]*:=' | head -n 1)). Write it as exactly one line: DEV_HOST := devhost"; exit 1; }; \
+[ "$$(printf '%s' "$$dh_c" | grep -c '^DEV_HOST' || true)" -le 1 ] || { echo "REFUSING: the committed $$ib_dm (HEAD) has more than one DEV_HOST := line, so where the dev stack runs depends on which one this machine evaluates. Keep one"; exit 1; }; \
+dh_v=$$(printf '%s\n' "$$dh_c" | sed -n 's/^DEV_HOST[[:space:]]*:=[[:space:]]*//p' | sed 's/[[:space:]]*$$//'); \
+case "$$dh_v" in *[!A-Za-z0-9._@-]*) echo "REFUSING: the committed $$ib_dm (HEAD) sets DEV_HOST to something other than a literal ($$dh_v). Write the host itself, with nothing after it: DEV_HOST := devhost"; exit 1 ;; esac; \
+[ "$$dh_v" = $(call sq,$(IB_DEV_HOST)) ] || { echo "REFUSING: DEV_HOST is "$(call sq,$(IB_DEV_HOST))" in this run, but the committed $$ib_dm (HEAD) says DEV_HOST := $${dh_v:-<nothing>}. Where the dev stack runs is that committed line, exactly: a Makefile.local, a conditional or computed definition, or an uncommitted edit moved it. Remove that, or commit the change"; exit 1; }; \
+if [ -n $(call sq,$(IB_DEV_HOST)) ] && [ $(call sq,$(IB_DEV_HOST)) != local ]; then \
+  [ "$${DOCKER_HOST:-}" = ssh://$(call sq,$(IB_DEV_HOST)) ] || { echo "REFUSING: DEV_HOST is "$(call sq,$(IB_DEV_HOST))" but this recipe's docker is $${DOCKER_HOST:-unset, this machine}: the stack would start somewhere else"; exit 1; }; \
+  cd -P . || exit 1; dh_d=$$(pwd -P); umask 077; \
+  case "$$dh_d" in *[!A-Za-z0-9._/-]*) echo "REFUSING: this checkout's path $$dh_d holds a character other than letters, digits, . _ / -, so the dev host cannot be asked for the same path"; exit 1 ;; esac; \
+  [ -s $(call sq,$(DEV_ENV_FILE)) ] || { echo "$$dh_d/"$(call sq,$(DEV_ENV_FILE))" is missing or empty — copy .env.example and fill it in first"; exit 1; }; \
+  dh_n=$$(mktemp "$$dh_d/.luxarch-dev-host.XXXXXX") || { echo "REFUSING: could not write a probe file in $$dh_d to show the dev host reads this same directory"; exit 1; }; \
+  trap 'trap "" HUP INT TERM; rm -f "$$dh_n"' EXIT; trap 'trap "" HUP INT TERM; exit 1' HUP INT TERM; \
+  od -An -N16 -tx1 /dev/urandom | tr -d ' \n' > "$$dh_n"; \
+  dh_want=$$(cat -- "$$dh_n" "$$dh_d/"$(call sq,$(DEV_ENV_FILE)) | cksum); \
+  dh_got=$$(ssh -o BatchMode=yes -o ConnectTimeout=10 $(call sq,$(IB_DEV_HOST)) cat -- "$$dh_n" "$$dh_d/"$(call sq,$(DEV_ENV_FILE)) 2>/dev/null </dev/null | cksum); \
+  rm -f "$$dh_n"; trap - EXIT; dh_ok=; [ "$$dh_got" != "$$dh_want" ] || dh_ok=1; \
+  [ -n "$$dh_ok" ] || { \
+    echo "REFUSING: the dev host "$(call sq,$(IB_DEV_HOST))" does not read this checkout at $$dh_d (unreachable over ssh, not mounted there at this path, or a copy rather than the same directory: a file just written here is not there, or "$(call sq,$(DEV_ENV_FILE))" differs). Its docker would start the stack with bind mounts taken from its own filesystem, and a missing one as an empty directory: mount the checkout on the dev host at this same path"; exit 1; }; \
+fi
 endef
 
 # v17: `--wait` waits for the LONG-RUNNING services only, and a ONE-SHOT service is judged by exiting
@@ -1639,10 +1694,27 @@ ch=; for id in $$ids; do st=$$(docker inspect -f '{{.State.StartedAt}}' "$$id" 2
     echo "REFUSING: could not read when $$s's container $$id started ('$$st'), so nothing says whether it runs its current config"; exit 1; }; \
   c=$$(find $(call sqw,$($(1)_RECREATE_PATHS)) -newer "$$rf" -print 2>/dev/null | head -n 1); rm -f "$$rf"; [ -z "$$c" ] || ch=$$c; done; \
 if [ -n "$$ch" ]; then \
-  $(if $(strip $($(1)_RECREATE_CHECK)),$(dev_compose) run --rm --no-deps -T "$$s" $(call sqw,$($(1)_RECREATE_CHECK)) || { \
+  $(if $(strip $($(1)_RECREATE_CHECK)),$(call dev_recreate_check,$(1)) || { \
     echo "FAIL  $$s's changed config fails its check ("$(call sq,$(strip $($(1)_RECREATE_CHECK)))"): $$s is not recreated and keeps running its previous one"; exit 1; }; )\
   $(dev_compose) up -d --wait --wait-timeout $(call sq,$(DEV_WAIT_TIMEOUT)) --force-recreate --no-deps "$$s" || { ib_up_why "$$s"; exit 1; }; \
   echo "$$s: recreated ($$ch changed after its container started)"; \
+fi
+endef
+
+# v25: the check runs while the service's own container holds its fixed addresses. `compose run` hands
+# the throwaway container the service's networks with their `ipv4_address` / `ipv6_address` /
+# `mac_address`, which docker refuses ("Address already in use"), so for a service that pins one the
+# check runs on compose's resolved model of the stack (`config`: the same image, mounts and
+# environment), read from stdin, with only those keys of that service dropped. A service that pins
+# no address runs its check as `$(dev_compose) run`.
+override define dev_recreate_check
+m=$$($(dev_compose) config 2>/dev/null) || { \
+  echo "REFUSING: compose cannot resolve the dev stack from "$(call sq,$(DEV_ENV_FILE))" to run $$s's check (run its config to see why; not printed here: it carries values)"; exit 1; }; \
+fx=$$(printf '%s\n' "$$m" | awk -v s="$$s" '/^[^ ]/ { top = $$0; in_s = 0; print; next } top == "services:" && /^  [^ ]/ { in_s = ($$1 == s ":"); print; next } in_s && /^ +(ipv4_address|ipv6_address|mac_address):/ { next } { print }'); \
+if [ "$$fx" = "$$m" ]; then \
+  $(dev_compose) run --rm --no-deps -T "$$s" $(call sqw,$($(1)_RECREATE_CHECK)); \
+else \
+  printf '%s\n' "$$fx" | $(dev_compose) -f - run --rm --no-deps -T "$$s" $(call sqw,$($(1)_RECREATE_CHECK)); \
 fi
 endef
 
@@ -1690,9 +1762,9 @@ dev-pin: ## Point the dev stack (compose, or the kustomize dev overlay) at an AL
 	ib_nm=$$(awk -v m="$$ib_m" -v e="$$ib_e" -v cm="$$ib_cm" -v ce="$$ib_ce" -v gm="$$ib_gm" -v ge="$$ib_ge" '(NR >= m && NR <= e || NR >= cm && NR <= ce || NR >= gm && NR <= ge) && /^override / { s = $$0; sub(/^override +(define +)?/, "", s); sub(/[ \t:=+!?].*/, "", s); printf " %s", s } END { print " " }' "$$ib_bf"); \
 	ib_bad=$$(printf '%s\n' "$$ib_db" | awk -v F="$$ib_bf" -v m="$$ib_m" -v e="$$ib_e" -v cm="$$ib_cm" -v ce="$$ib_ce" -v gm="$$ib_gm" -v ge="$$ib_ge" -v names="$$ib_nm" -v tg='$(subst ','\'',release publish-sha release-public publish-mirror dev-deploy dev-pin gh-release $@ $(MAKECMDGOALS))' 'function bad(n, w, f, l) { if (index(names, " " n " ") && (w != "" || f != F || (l + 0 < m || l + 0 > e) && (l + 0 < cm || l + 0 > ce) && (l + 0 < gm || l + 0 > ge))) printf "%s%s at %s:%s; ", n, (w != "" ? " (" w "-specific)" : ""), f, l; else if (w != "" && index(" REGISTRY RELEASE_REGISTRY PUBLIC_REGISTRY PRIVATE_REGISTRY LUXAUDIT_IMAGE LUXAUDIT IMAGE_NAME PLATFORMS ", " " n " ") && reaches(sc)) printf "%s (%s-specific, %s) at %s:%s; ", n, w, sc, f, l } function reaches(p,   i, k, T, a, b) { k = split(tg, T, " "); i = index(p, "%"); for (a = 1; a <= k; a++) { if (i == 0 && T[a] == p) return 1; if (i > 0 && index(T[a], substr(p, 1, i - 1)) == 1 && length(T[a]) >= length(p) - 1 && substr(T[a], length(T[a]) - (length(p) - i) + 1) == substr(p, i + 1)) return 1 } return 0 } /^# Pattern-specific Variable Values/ { pat = 1 } /^# (Directories|Implicit Rules|Files)/ { pat = 0 } pat && /^[^#].* :$$/ { ph = $$0; sub(/ :$$/, "", ph) } /^# (makefile|\047override\047 directive|environment|environment under -e|command line|default|automatic)( \(from \047.*\047, line [0-9]+\))?$$/ { o = 1; f = ""; l = 0; if (match($$0, /\(from \047.*\047, line [0-9]+\)$$/)) { s = substr($$0, RSTART + 7, RLENGTH - 8); f = s; sub(/\047, line [0-9]+$$/, "", f); l = s; sub(/^.*\047, line /, "", l) } next } o && pat && /^# [A-Za-z_.][A-Za-z0-9_.]* (::?:?=|=|\+=|\?=|!=)/ { sc = ph; bad($$2, "pattern", f, l); o = 0; next } o && /^[^#\t ][^:]*: [A-Za-z_.][A-Za-z0-9_.]* (::?:?=|=|\+=|\?=|!=)/ { x = $$0; sc = x; sub(/:.*/, "", sc); sub(/^[^:]*: /, "", x); split(x, X, " "); bad(X[1], "target", f, l); o = 0; next } o && /^define [A-Za-z_]/ { bad($$2, "", f, l); o = 0; next } o && /^[A-Za-z_.][A-Za-z0-9_.]* (::?:?=|=|\+=|\?=|!=)/ { bad($$1, "", f, l); o = 0; next } { o = 0 }'); \
 	[ -z "$$ib_bad" ] || { echo "REFUSING: make's own database (a clean evaluation with these goals) defines what the image block defines from outside the block: $${ib_bad%; }. The block's names are set inside it only."; exit 1; }; \
-	$(require_main_checkout); $(require_registry); $(require_images)$(require_dev_deploy); $(require_dev_env_file); $(require_pin_tag); \
+	$(require_main_checkout); $(require_registry); $(require_images)$(require_dev_deploy); $(require_dev_env_file); $(require_dev_host); $(require_pin_tag); \
 	$(call image_block_each,dev_pin_check,;); \
-	$(if $(filter none,$(DEV_DEPLOY)),:,$(if $(filter kustomize,$(DEV_DEPLOY)),$(dev_kustomize),$(call pin_env_tag,$(DEV_ENV_FILE),$(TAG),$(foreach p,$(DEV_PROFILES),--profile $(p)),$(call image_block_each,img_base,)); $(dev_up)))$(ib_unchanged)
+	$(if $(filter none,$(DEV_DEPLOY)),:,$(if $(filter kustomize,$(DEV_DEPLOY)),$(dev_kustomize),$(dev_host_same_files); $(call pin_env_tag,$(DEV_ENV_FILE),$(TAG),$(foreach p,$(DEV_PROFILES),--profile $(p)),$(call image_block_each,img_base,)); $(dev_up)))$(ib_unchanged)
 
 # ── Verify: build from source, locally, every run ───────────────────────────────────────────────
 # The test image must carry the SAME app layers production ships, plus the dev group. Two Dockerfile
@@ -1710,7 +1782,7 @@ test-build: ## Build the LOCAL test image from source (never pushed, never a dep
 	@$(if $(and $(value sq),$(value sqw),$(value img_dockerfile)),,$(error REFUSING: the image block (v18) builds with the build core's quoting and image helpers (sq, sqw, img_*), which this makefile does not define. Paste `luxarch --emit build-core` directly above the image block))$(if $(filter none,$(DEV_DEPLOY)),echo "REFUSING: "$(call sq,$(IB_NO_STACK))"; it has no app image to build a test stage of"; exit 1,set -f; docker build --load --target test $(call sqw,$(BUILD_ARGS)) -f $(call sq,$(call img_dockerfile,$(IMAGE_PRIMARY))) -t $(call sq,$(TEST_IMAGE)) $(call sq,$(call img_context,$(IMAGE_PRIMARY))) >/dev/null)
 # luxarch:image-block end - DO NOT edit this marker line: the block's runtime guard reads its range.
 
-# luxarch:gh-release asset v1 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit gh-release`.
+# luxarch:gh-release asset v3 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit gh-release`.
 # ── The GitHub Release: this version's notes on origin's /releases page ──────────────────────────
 # Emitted by `luxarch --emit gh-release`. Paste it directly BELOW the image block (v24 or later), in the
 # same makefile: the block's `release` and `release-public` run its macros, every block target refuses
@@ -1724,7 +1796,8 @@ test-build: ## Build the LOCAL test image from source (never pushed, never a dep
 # BEFORE the first push, against the REMOTE: `gh release create --verify-tag` needs the tag on GitHub, so
 # a tag that exists only locally would let the image push and the Release fail. If the Release step
 # still fails, re-run `make gh-release` alone: it is idempotent, and it needs the pushed tag, not HEAD
-# (`release` refuses an already-released version, and HEAD moves on after the release commit).
+# (`release` refuses an already-released version, and HEAD moves on after the release commit). With
+# PUBLIC_REGISTRY set, `release-public` runs it last instead, after the public copy (v23).
 # RELEASE_NOTES is found, not assumed: `<app>/release_notes/$(VERSION).md` wherever the app lives, up to
 # three directories down (`app/`, `src/<pkg>/`, `apps/backend/app/`). Set it above the image block only when
 # more than one app ships notes.
@@ -1760,7 +1833,20 @@ set -- $(call sqw,$(RELEASE_NOTES)); if [ $$# -ne 1 ]; then \
   echo "Write <app>/release_notes/"$(call sq,$(VERSION))".md (luxarch --emit release-notes-guide), or set RELEASE_NOTES above the image block."; \
   exit 1; \
 fi; \
-$(require_origin_tag)
+$(require_origin_tag); \
+$(gh_release_notes_tagged)
+endef
+
+# v2: the notes published are the ones the tagged commit holds (`git cat-file blob v$(VERSION):<file>`,
+# the path read from this directory), never the working tree's: an uncommitted edit, or one committed
+# after the tag, would put text on the Release that the released commit does not carry. A tag that does
+# not hold the notes file refuses, in the preflight, before anything is pushed. An absolute
+# RELEASE_NOTES under this directory is read relative to it; one outside it names no file the tag holds.
+override gh_release_notes_path = $(patsubst $(CURDIR)/%,%,$(strip $(RELEASE_NOTES)))
+override define gh_release_notes_tagged
+$(if $(filter /%,$(gh_release_notes_path)),echo "REFUSING: RELEASE_NOTES is "$(call sq,$(strip $(RELEASE_NOTES)))": outside this checkout ("$(call sq,$(CURDIR))") and so in no tagged commit. Set it to the notes file inside the repo"; exit 1; )\
+git cat-file -e $(call sq,refs/tags/v$(VERSION)^{commit}:./$(gh_release_notes_path)) 2>/dev/null || { \
+  echo "REFUSING: v"$(call sq,$(VERSION))" does not hold "$(call sq,$(strip $(RELEASE_NOTES)))": the GitHub Release publishes the notes the tagged commit holds. Commit the notes, then tag (a released tag is never moved: bump VERSION)"; exit 1; }
 endef
 
 # v23: a Release is reported only when gh shows it published (by its tag, and not a draft): an exit
@@ -1775,8 +1861,12 @@ if $(gh_release_shown); then \
 elif [ "$$ib_ght" = $(call sq,v$(VERSION))" true" ]; then \
   echo "REFUSING: GitHub Release v"$(call sq,$(VERSION))" is a draft, which nobody can see: publish or delete the draft v"$(call sq,$(VERSION)); exit 1; \
 else \
-  gh release create $(call sq,v$(VERSION)) -R "github.com/$${ib_ghr:?}" --verify-tag --title $(call sq,$(VERSION)) --notes-file $(call sqw,$(RELEASE_NOTES)) || { \
-    echo "REFUSING: gh release create v"$(call sq,$(VERSION))" failed; nothing was published"; exit 1; }; \
+  ( ib_nt=$$(mktemp) || { echo "REFUSING: mktemp failed, so there is no file to hand gh the tagged notes in; nothing was published"; exit 1; }; \
+    trap 'trap "" HUP INT TERM; rm -f "$$ib_nt"' EXIT; trap 'trap "" HUP INT TERM; exit 1' HUP INT TERM; \
+    git cat-file blob $(call sq,refs/tags/v$(VERSION)^{commit}:./$(gh_release_notes_path)) > "$$ib_nt" || { \
+      echo "REFUSING: could not read "$(call sq,$(strip $(RELEASE_NOTES)))" from v"$(call sq,$(VERSION))"; nothing was published"; exit 1; }; \
+    gh release create $(call sq,v$(VERSION)) -R "github.com/$${ib_ghr:?}" --verify-tag --title $(call sq,$(VERSION)) --notes-file "$$ib_nt" || { \
+      echo "REFUSING: gh release create v"$(call sq,$(VERSION))" failed; nothing was published"; exit 1; } ) || exit 1; \
   $(gh_release_shown) || { \
     echo "REFUSING: gh release create exited 0, but gh release view v"$(call sq,$(VERSION))" does not show the Release: nothing is published"; exit 1; }; \
   echo "Published GitHub Release v"$(call sq,$(VERSION))" on github.com/$$ib_ghr"; \
@@ -1786,12 +1876,28 @@ endef
 # v23: with PUBLIC_REGISTRY set, users pull from there, so the GitHub Release follows the public copy:
 # `release` leaves it to `release-public`, and a standalone `gh-release` refuses until every image's
 # public `:$(VERSION)` exists (any answer but the manifest refuses, an unreachable registry too).
+# v2: and until the copy is the release, judged by digest as `release-public PUBLIC_RESUME=1` judges
+# it: every image's public `:$(VERSION)` holds the digest of its released `:$(VERSION)` (another digest
+# refuses: it is immutable, so bump VERSION), and with PUBLIC_LATEST its public `:latest` holds it too
+# (a copy that stopped before `:latest` refuses and names the resume, which moves it and then publishes
+# the Release). An older version, copied without moving `:latest`, runs with `PUBLIC_LATEST=` on the
+# command line, as its copy did.
 override define gh_release_public_check
+case $(call sq,$(strip $(PUBLIC_LATEST))) in ''|1) ;; *) echo "REFUSING: PUBLIC_LATEST is empty or 1, not "$(call sq,$(PUBLIC_LATEST)); exit 1 ;; esac; \
 docker manifest inspect $(call sq,$(call img_public,$(1))) >/dev/null 2>&1 || { \
-  echo "REFUSING: "$(call sq,$(call img_public,$(1)))" is not published, and the GitHub Release follows the public copy (users pull from "$(call sq,$(PUBLIC_REGISTRY))"): make release-public publishes both"; exit 1; }
+  echo "REFUSING: "$(call sq,$(call img_public,$(1)))" is not published, and the GitHub Release follows the public copy (users pull from "$(call sq,$(PUBLIC_REGISTRY))"): make release-public publishes both"; exit 1; }; \
+rd=$$(docker buildx imagetools inspect $(call sq,$(call img_version,$(1))) --format '{{.Manifest.Digest.Encoded}}' 2>/dev/null) || rd=; \
+case "$$rd" in ''|*[!0-9a-f]*) echo "REFUSING: could not read the digest of the released "$(call sq,$(call img_version,$(1)))", so nothing proves "$(call sq,$(call img_public,$(1)))" is the release"; exit 1 ;; esac; \
+pd=$$(docker buildx imagetools inspect $(call sq,$(call img_public,$(1))) --format '{{.Manifest.Digest.Encoded}}' 2>/dev/null) || pd=; \
+case "$$pd" in ''|*[!0-9a-f]*) echo "REFUSING: could not read the digest of "$(call sq,$(call img_public,$(1)))", so nothing proves it is the release"; exit 1 ;; esac; \
+[ "$$pd" = "$$rd" ] || { \
+  echo "REFUSING: "$(call sq,$(call img_public,$(1)))" is PUBLISHED at another digest (sha256:$$pd) than the released "$(call sq,$(call img_version,$(1)))" (sha256:$$rd): the GitHub Release would name a public image that is not the release, and it is immutable. Bump VERSION."; exit 1; }$(if $(filter 1,$(strip $(PUBLIC_LATEST))),; \
+ld=$$(docker buildx imagetools inspect $(call sq,$(call img_public_latest,$(1))) --format '{{.Manifest.Digest.Encoded}}' 2>/dev/null) || ld=; \
+[ "$$ld" = "$$rd" ] || { \
+  echo "REFUSING: "$(call sq,$(call img_public_latest,$(1)))" is not at the released digest sha256:$$rd (it reads '$${ld:-nothing}'): the public copy stopped before :latest. make release-public PUBLIC_RESUME=1 moves it and then publishes the GitHub Release. An older version that leaves :latest where it is: make gh-release PUBLIC_LATEST="; exit 1; })
 endef
 
-gh-release: ## Publish the GitHub Release for v$(VERSION) from its release notes (idempotent; `release` runs it)
+gh-release: ## Publish the GitHub Release for v$(VERSION) from its release notes (idempotent; `release` runs it, or `release-public` with PUBLIC_REGISTRY set)
 	@$(ib_run_snap)$(if $(and $(value sq),$(value sqw),$(value img_dockerfile)),,$(error REFUSING: the image block (v18) builds with the build core's quoting and image helpers (sq, sqw, img_*), which this makefile does not define. Paste `luxarch --emit build-core` directly above the image block))$(if $(value gh_release_publish),,$(error REFUSING: the image block (v24) publishes its GitHub Release with the gh-release block (gh_release_preflight, gh_release_publish), which this makefile does not define. Paste `luxarch --emit gh-release` directly below the image block))set -e; set -f; $(if $(filter-out default,$(origin MAKE_COMMAND)),echo "REFUSING: MAKE_COMMAND is set from outside the makefile"; exit 1; )$(if $(strip $(MAKEFILES)),echo "REFUSING: MAKEFILES is set so make read makefiles before this one that nobody committed or named: unset it"; exit 1; )$(if $(filter-out file,$(origin MAKEFILE_LIST)),echo "REFUSING: MAKEFILE_LIST is set from outside the makefile"; exit 1; )$(if $(filter-out default undefined,$(origin MAKECMDGOALS)),echo "REFUSING: MAKECMDGOALS is set from outside the makefile"; exit 1; )$(if $(filter command% environment%,$(origin SHELL) $(origin .SHELLFLAGS)),echo "REFUSING: SHELL or .SHELLFLAGS comes from the command line or the environment: the recipe would run in another shell"; exit 1; )$(if $(findstring x,$(filter-out --%,$(filter -%,$(.SHELLFLAGS)))),echo "REFUSING: .SHELLFLAGS traces the recipe (-x) and would print every value spliced into it"; exit 1; )\
 	[ -z "$${BASH_ENV:-}$${ENV:-}" ] || { echo "REFUSING: BASH_ENV or ENV is set: a shell startup file ran before this recipe"; exit 1; }; case $$- in *x*) echo "REFUSING: the recipe shell traces its commands (-x) and would print every value spliced into it"; exit 1 ;; esac; \
 	ib_dm=; for m in GNUmakefile makefile Makefile; do if [ -f "$$m" ]; then ib_dm=$$m; break; fi; done; \
@@ -1823,7 +1929,7 @@ gh-release: ## Publish the GitHub Release for v$(VERSION) from its release notes
 	$(if $(strip $(PUBLIC_REGISTRY)),$(call image_block_each,gh_release_public_check,;); )$(gh_release_publish)$(ib_unchanged)
 # luxarch:gh-release end - DO NOT edit this marker line: the image block's runtime guard reads its range.
 
-# luxarch:smoke asset v11 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit smoke`.
+# luxarch:smoke asset v14 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit smoke`.
 # ── Smoke: probe the DEPLOYED stack from outside, after every dev deploy ──────────────────────────
 # Emitted by `luxarch --emit smoke`; paste below the image block. `make test` runs the app in-process
 # against its test stack, so it cannot see the proxy, the server, the production image or an entry
@@ -1834,7 +1940,7 @@ gh-release: ## Publish the GitHub Release for v$(VERSION) from its release notes
 # (`repo.stack_smoke_wired`); a FAIL fails the deploy, and a probe that cannot run says NOT RUN and
 # why, never a silent pass.
 #
-# Settings are `?=` defaults: override them above this block (or in Makefile.local for a host name).
+# Settings are `?=` defaults: override them above this block, committed (SMOKE_URL is the dev name).
 
 # Setting: where the dev stack is reachable from the build host (e.g. https://dev.example.com) ---
 SMOKE_URL ?=
@@ -1877,6 +1983,9 @@ SMOKE_RUN_OPTS ?=
 # Setting: extra curl options (e.g. --cacert <file> for a private CA) -------------------------
 SMOKE_CURL_OPTS ?=
 
+# v14: with the browser-smoke block pasted below this one (luxarch --emit browser-smoke), `make smoke`
+# runs `smoke-browser` last, once every probe above has passed, so a page that breaks in a browser
+# fails the deploy. Without that block (opt-in) the line does nothing.
 # v11: the key reaches curl on its standard input, never its command line, where any user on the
 # host could read it for as long as curl runs (a stream holds it open). The signed-in probe wants
 # SMOKE_AUTH_TYPE as its media type (any case) and a whole body, or be an event stream still open
@@ -1910,9 +2019,9 @@ SMOKE_CURL_OPTS ?=
 # said the same thing; the probe can only pass on an answer from the app itself.
 smoke: ## Probe the deployed dev stack: build commit, static asset, forged Host refused, auth, containers healthy, standalone entry points
 	@set -u; fail=0; \
-	[ -n "$(strip $(SMOKE_URL)$(SMOKE_CONTAINERS))" ] || { echo "REFUSING: set SMOKE_URL to the dev stack's address (Makefile.local), or SMOKE_CONTAINERS to its containers when it serves no HTTP"; exit 2; }; \
+	[ -n "$(strip $(SMOKE_URL)$(SMOKE_CONTAINERS))" ] || { echo "REFUSING: commit SMOKE_URL := https://<the dev stack's dev name> in the Makefile, or SMOKE_CONTAINERS := <its containers> when it serves no HTTP"; exit 2; }; \
 	probe() { curl -sS --max-time 15 $(SMOKE_CURL_OPTS) -o "$$B" -w '%{http_code} %{content_type}' "$$@" 2>/dev/null || echo "000 -"; }; \
-	B=$$(mktemp); trap 'rm -f "$$B"' EXIT INT TERM; \
+	B=$$(mktemp); trap 'trap "" HUP INT TERM; rm -f "$$B"' EXIT; trap 'trap "" HUP INT TERM; exit 1' HUP INT TERM; \
 	sha=$$(git rev-parse --short=7 HEAD) || sha=; \
 	pin=; if [ -n "$(SMOKE_ENV_FILE)" ] && [ -f "$(SMOKE_ENV_FILE)" ]; then pin=$$(sed -n 's/^[[:space:]]*TAG=//p' "$(SMOKE_ENV_FILE)" | tail -n 1 | tr -d "\"' \r"); fi; \
 	want=$$sha; what="this commit"; img="$(SHA_IMAGE)"; \
@@ -2016,6 +2125,7 @@ smoke: ## Probe the deployed dev stack: build commit, static asset, forged Host 
 	fi; \
 	[ "$$n" -ne 0 ] || echo "NOT RUN  entry points: no module under $(SMOKE_SCRIPTS_DIR) and no SMOKE_ENTRY_MODULES"; \
 	exit $$fail
+	@$(if $(value smoke_browser_block),$(MAKE) --no-print-directory smoke-browser,:)
 
 .PHONY: test
 test: ## Run the test suite (node:test, in docker — no npm install, no build step)
@@ -2182,7 +2292,7 @@ logs: ## Show container logs
 # escalating a genuinely-wrong guard to the maintainer, never by routing around it.
 # ---------------------------------------------------------------------------------------------
 
-# luxarch:guard-run asset v10 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit guard-run`.
+# luxarch:guard-run asset v11 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit guard-run`.
 # ── GUARD_RUN: how every guard sees this checkout ───────────────────────────────────────────────────
 # Emitted by `luxarch --emit guard-run`; paste it above the targets that run the guards (`status:`, and
 # `arch:` / `lint:` / `audit:` where they run a guard image).
@@ -2217,7 +2327,7 @@ override GUARD_MAIN := $(if $(filter command,$(origin GUARD_MAIN)),$(GUARD_MAIN)
 # sub-make at its own MAKELEVEL) were refused at the first sub-make, so a correctly wired repo read
 # red. The block's own variables are set with `override` and never
 # exported, so neither `make -e` nor a parent's bare `export` can hand a sub-make other values.
-# Stated limits, each refused rather than misread: a `-f` path holding two spaces in a row or a tab
+# Refused rather than misread: a `-f` path holding two spaces in a row or a tab
 # (MAKEFILE_LIST collapses them: run `make -C`), and a checkout path holding `:` (docker reads it
 # as a mount option). Not refused: under `make -n`, a guard line that make runs anyway (a `+` line,
 # or one naming `$(MAKE)`) in a sub-make that inherited a command-line CURDIR.
@@ -2281,13 +2391,13 @@ override GUARD_RUN = guard_slot_run() ( $(guard_slot_body) $(guard_capped) ); gu
 #     file, and each slot file 644 so every user can open it read-only, which is all a lock needs: two
 #     users on one machine share one cap. A slot directory or file that is a symlink, not a plain
 #     file, or unreadable is refused, naming it.
-# Stated limits: the cap counts slots 1..HEAVY_SLOTS of each caller, so a caller with a larger setting
+# The cap counts slots 1..HEAVY_SLOTS of each caller, so a caller with a larger setting
 # (or a second makefile given with `-f` that sets one) uses more slots than one with a smaller; a
 # process a job starts that outlives it (a backgrounded daemon) keeps the descriptor, and so the slot,
 # until it exits; where there is no /proc (macOS) a job started through a process that closed its
 # descriptors is not seen as nested and waits for a slot of its own; and an ancestor shell that opens
-# a held slot file on descriptor 9 by hand makes its children read as nested in that slot. Found by
-# attack round 3 and not closed: a `--rule` substring that matches many rules (`--rule .`) is taken as
+# a held slot file on descriptor 9 by hand makes its children read as nested in that slot.
+# Also as built: a `--rule` substring that matches many rules (`--rule .`) is taken as
 # targeted; a job nested through an ancestor runs unlocked from the moment it finds the ancestor's
 # lock until its own background request reaches the kernel, so an ancestor that exits in that window
 # (milliseconds; not hit unloaded in 50 tries) lets a new job share its slot; a slot file removed
@@ -2456,7 +2566,7 @@ audit: ## luxaudit — dependency CVEs. luxmark's deps are CDN tags, so expect 0
 	$(GUARD_RUN) $(LUXAUDIT_IMAGE)
 
 .PHONY: gitleaks gitleaks-staged
-# luxarch:gitleaks asset v23 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit gitleaks`.
+# luxarch:gitleaks asset v26 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit gitleaks`.
 # ── The privacy gate: EVERY surface a commit publishes ──────────────────────────────────────────
 # Emitted by `luxarch --emit gitleaks`. Drop in verbatim.
 #
@@ -2572,7 +2682,19 @@ unexport gitleaks_q gitleaks_pair gitleaks_named gitleaks_declared
 # The working-tree pass's file work, in one process (python3 in the luxlint image, no network): `farm`
 # lays out a link for each path in `cand` (a `dir/` entry: every file under it) for BuildKit to judge,
 # and `copy` copies each path in `sent` out of the checkout, a link as a link and a file with its NUL
-# bytes stripped. Paths are bytes end to end.
+# bytes stripped. Paths are bytes end to end. `builds` asks make which `docker build` / `buildx build`
+# each target of each makefile git lists runs, and prints `B <context> <Dockerfile>` for each (`N <dir>
+# <Dockerfile>` for a named `--build-context`), repo-relative, and `U <Dockerfile>` for one whose
+# context it cannot read (an empty Dockerfile when that cannot be read either). make never sees the
+# repo's makefiles: it reads a mirror in which each is a rewritten copy (the MAKE variable renamed, `+`
+# prefixes dropped, so no recipe line runs under `-n`; every file make's MAKEFILE_LIST names, whatever
+# its name, and none it reads from outside the mirror) and every other entry links to the checkout,
+# with CURDIR pinned to the real directory, as luxarch's own makefile rules read one. It runs as
+# `nobody` (where the container lets it drop root), with the checkout read-only and no network. What
+# runs is the makefiles' `$(shell ...)`, the same text `make gitleaks` itself has just evaluated. Each
+# printed command is split as the shell splits it (`cd <dir>` followed, shell keywords and wrappers such
+# as `timeout 900` read past, a command substitution one unreadable word, a docker build it still cannot
+# read an unreadable build), and a build's context is its one positional word, each valued flag's value skipped.
 override define gitleaks_stage_py
 import os, sys
 mode, w, d = sys.argv[1], os.fsencode(sys.argv[2]), os.fsencode(sys.argv[3])
@@ -2594,7 +2716,7 @@ if mode == "farm":
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             if not os.path.lexists(dst):
                 os.symlink(b"-", dst)
-else:
+elif mode == "copy":
     for p in names(b"sent"):
         src, dst = os.path.join(w, p), os.path.join(d, b"t", p)
         if not entry(src):
@@ -2606,6 +2728,331 @@ else:
         with open(src, "rb") as i, open(dst, "wb") as o:
             for chunk in iter(lambda: i.read(1 << 20), b""):
                 o.write(chunk.replace(b"\0", b""))
+elif mode == "builds":
+    import posixpath, re, shlex, subprocess, tempfile, time
+    from concurrent.futures import ThreadPoolExecutor
+    wr = os.fsdecode(w)
+    base = tempfile.mkdtemp()
+    os.chmod(base, 0o755)
+    top = os.path.join(base, "r")
+    ents = ("GNUmakefile", "makefile", "Makefile")
+    def mkfile(n):
+        return n in ents or n.startswith("Makefile") or n.endswith(".mk")
+    mks, need = set(), {wr}
+    for here, dirs, files in os.walk(wr):
+        dirs[:] = [x for x in dirs if x not in (".git", "node_modules", ".venv", "venv", "__pycache__")]
+        for f in files:
+            if mkfile(f):
+                mks.add(os.path.join(here, f))
+                p = here
+                while p not in need:
+                    need.add(p)
+                    p = os.path.dirname(p)
+    sub = re.compile(r"\$([({])MAKE([)}])")
+    plus = re.compile(r"(?m)^(\t[@\- ]*)\+")
+    for real in sorted(need, key=len):
+        dst = top + real[len(wr):]
+        os.makedirs(dst, exist_ok=True)
+        os.chmod(dst, 0o755)
+        for e in os.scandir(real):
+            out = os.path.join(dst, e.name)
+            if e.path in need and e.is_dir(follow_symlinks=False):
+                continue
+            if e.path in mks and e.is_file(follow_symlinks=False):
+                with open(e.path, encoding="utf-8", errors="surrogateescape") as h:
+                    t = h.read()
+                with open(out, "w", encoding="utf-8", errors="surrogateescape") as h:
+                    h.write(plus.sub(r"\1", sub.sub(r"$\1GITLEAKS_SUBMAKE\2", t)))
+                os.chmod(out, 0o644)
+            else:
+                os.symlink(e.path, out)
+    def own_copy(q):
+        # the mirror path `q` becomes a rewritten copy of the file it stands for, each directory on the
+        # way a real mirror directory; False when it is not under the mirror or names no file
+        q = os.path.normpath(q)
+        if q != top and not q.startswith(top + "/"):
+            return False
+        at = top
+        for part in q[len(top) + 1:].split("/")[:-1]:
+            at = os.path.join(at, part)
+            if os.path.islink(at):
+                real = os.readlink(at)
+                if not os.path.isdir(real):
+                    return False
+                os.unlink(at)
+                os.mkdir(at, 0o755)
+                for e in os.scandir(real):
+                    os.symlink(e.path, os.path.join(at, e.name))
+            elif not os.path.isdir(at):
+                return False
+        if not os.path.islink(q):
+            return os.path.isfile(q)
+        real = os.readlink(q)
+        if not os.path.isfile(real):
+            return False
+        with open(real, encoding="utf-8", errors="surrogateescape") as h:
+            t = h.read()
+        os.unlink(q)
+        with open(q, "w", encoding="utf-8", errors="surrogateescape") as h:
+            h.write(plus.sub(r"\1", sub.sub(r"$\1GITLEAKS_SUBMAKE\2", t)))
+        os.chmod(q, 0o644)
+        return True
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": "/nonexistent", "LANG": "C.UTF-8",
+           "GIT_DIR": os.path.join(wr, ".git"), "GIT_WORK_TREE": wr, "GIT_CONFIG_COUNT": "1",
+           "GIT_CONFIG_KEY_0": "safe.directory", "GIT_CONFIG_VALUE_0": "*"}
+    drop = [os.geteuid() == 0]
+    end = time.monotonic() + 240
+    def run(args, cwd, rel):
+        t = max(1, min(60, end - time.monotonic()))
+        a = ["make", *args, "GITLEAKS_SUBMAKE=make", "CURDIR=" + posixpath.join(wr, rel).rstrip("/")]
+        kw = dict(cwd=cwd, env=env, capture_output=True, text=True, errors="surrogateescape", timeout=t, check=False)
+        if drop[0]:
+            try:
+                return subprocess.run(a, user=65534, group=65534, extra_groups=[], **kw)
+            except PermissionError:
+                drop[0] = False
+        return subprocess.run(a, **kw)
+    vf = set("-t --tag --target -f --file --platform --build-arg --output -o --label --cache-from --cache-to --secret --ssh --progress --builder --iidfile --metadata-file --network --build-context --shm-size --add-host --allow --annotation --attest --sbom --provenance --call --cgroup-parent --ulimit --memory -m --memory-swap --cpu-shares -c --cpu-period --cpu-quota --cpuset-cpus --cpuset-mems --isolation --security-opt --label-file --policy".split())
+    gv = set("-H --host --context -c --config -l --log-level --tlscacert --tlscert --tlskey".split())
+    found = set()
+    def rel_of(p, cwd):
+        if p.startswith("/"):
+            for pre in (wr, top):
+                if p == pre or p.startswith(pre.rstrip("/") + "/"):
+                    return posixpath.normpath(p[len(pre):].lstrip("/") or ".")
+            return posixpath.normpath(p)
+        return posixpath.normpath(posixpath.join(cwd, p))
+    def bad(x):
+        return any(c in x for c in "$`*?[") or x == ""
+    def build(words, cwd):
+        i = 1
+        while i < len(words) and words[i].startswith("-"):
+            i += 2 if words[i] in gv else 1
+        rest = words[i:]
+        if rest[:1] == ["build"]:
+            rest = rest[1:]
+        elif len(rest) > 1 and rest[0] in ("buildx", "image", "builder") and rest[1] == "build":
+            rest = rest[2:]
+        else:
+            return False
+        pos, df, named, j = [], None, [], 0
+        while j < len(rest):
+            a = rest[j]
+            if a in ("-f", "--file") and j + 1 < len(rest):
+                df, j = rest[j + 1], j + 2
+                continue
+            if a.startswith("--file="):
+                df = a[7:]
+            elif a.startswith("-f") and not a.startswith("--") and len(a) > 2:
+                df = a[2:].lstrip("=")
+            elif a == "--build-context" and j + 1 < len(rest):
+                named.append(rest[j + 1])
+                j += 2
+                continue
+            elif a.startswith("--build-context="):
+                named.append(a[16:])
+            elif a in vf:
+                j += 2
+                continue
+            elif a == "-" or not a.startswith("-"):
+                pos.append(a)
+            j += 1
+        if df == "-" or (len(pos) == 1 and ("://" in pos[0] or pos[0].startswith("git@"))):
+            return True
+        spelled = df if df is not None else posixpath.join(pos[0], "Dockerfile") if len(pos) == 1 else ""
+        if bad(spelled):
+            key = ""
+        elif cwd is None:
+            key = posixpath.normpath(spelled)
+        else:
+            key = rel_of(spelled, cwd)
+        if cwd is None or len(pos) != 1 or pos[0] == "-" or bad(pos[0]):
+            found.add(("U", key))
+            return True
+        ctx, dfr = rel_of(pos[0], cwd), key
+        found.add(("B", ctx, dfr))
+        for n in named:
+            v = n.split("=", 1)[1] if "=" in n else ""
+            if v and "://" not in v and not v.startswith("docker-image:") and not v.startswith("oci-layout:"):
+                found.add(("N", "U" if bad(v) else rel_of(v, cwd), dfr))
+        return True
+    keywords = {"then", "else", "elif", "do", "if", "while", "until", "{", "!"}
+    wrappers = {"env": {"-u", "-C", "-S"}, "exec": {"-a"}, "command": set(), "nohup": set(), "time": set(),
+                "sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-U"}, "nice": {"-n"},
+                "xargs": {"-I", "-n", "-P", "-L", "-d", "-E", "-s", "-a"}, "timeout": {"-s", "-k"}}
+    def redir(t):
+        return bool(t) and set(t) <= set("<>&|") and ("<" in t or ">" in t)
+    def flat(s):
+        out, i, q = [], 0, ""
+        while i < len(s):
+            c = s[i]
+            if q == "'":
+                q = "" if c == "'" else q
+                out.append(c)
+                i += 1
+            elif c == "\\" and i + 1 < len(s):
+                out.append(s[i:i + 2])
+                i += 2
+            elif s.startswith("$(", i) or c == "`":
+                j, depth = i + 1, 1
+                if c == "`":
+                    while j < len(s) and s[j] != "`":
+                        j += 1
+                else:
+                    j += 1
+                    while j < len(s) and depth:
+                        depth += {"(": 1, ")": -1}.get(s[j], 0)
+                        j += 1
+                    j -= 1
+                out.append("$S")
+                i = j + 1
+            else:
+                if c in "'\"":
+                    q = "" if q == c else (q or c)
+                out.append(c)
+                i += 1
+        return "".join(out)
+    def line(text, cwd):
+        try:
+            lx = shlex.shlex(flat(text), posix=True, punctuation_chars=";&|()<>")
+            lx.whitespace_split = True
+            lx.commenters = ""
+            toks = list(lx)
+        except ValueError:
+            if "build" in text:
+                found.add(("U", ""))
+            return
+        stack, seg, cur = [], [], cwd
+        def seg_done(seg, cur):
+            k, out = 0, []
+            while k < len(seg):
+                t = seg[k]
+                if redir(t):
+                    k += 2
+                elif t.isdigit() and k + 1 < len(seg) and redir(seg[k + 1]):
+                    k += 3
+                else:
+                    out.append(t)
+                    k += 1
+            words = list(out)
+            while out:
+                if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", out[0]) or out[0] in keywords:
+                    out.pop(0)
+                elif out[0] in wrappers:
+                    wrap = out.pop(0)
+                    while out and out[0].startswith("-"):
+                        flag = out.pop(0)
+                        if flag in wrappers[wrap] and out:
+                            out.pop(0)
+                    if wrap == "timeout" and out:
+                        out.pop(0)
+                else:
+                    break
+            if not out:
+                return cur
+            if out[0] == "cd":
+                if len(out) == 2 and not bad(out[1]) and cur is not None:
+                    return rel_of(out[1], cur)
+                return None
+            # a command handed to a wrapper this does not know (a shell function: `bg docker build …`)
+            # is read from its docker word on
+            at = next((i for i, x in enumerate(out) if posixpath.basename(x) in ("docker", "podman")), None)
+            read = at is not None and build(out[at:], cur)
+            if not read and "build" in words and any(posixpath.basename(x) in ("docker", "podman") for x in words):
+                found.add(("U", ""))
+            return cur
+        split = []
+        for t in toks:
+            if set(t) <= set(";&|()") and t:
+                split += re.findall(r"&&|\|\||\|&|;;|[;&|()]", t)
+            else:
+                split.append(t)
+        for t in split + [";"]:
+            if t in ("&&", "||", ";", "|", "&", "|&", ";;"):
+                cur = seg_done(seg, cur)
+                seg = []
+            elif t == "(":
+                cur = seg_done(seg, cur)
+                seg = []
+                stack.append(cur)
+            elif t == ")":
+                seg_done(seg, cur)
+                seg = []
+                cur = stack.pop() if stack else cur
+            else:
+                seg.append(t)
+    def commands(out, cwd):
+        buf = ""
+        for raw in out.splitlines():
+            if raw.endswith("\\"):
+                buf += raw[:-1] + " "
+                continue
+            line(buf + raw, cwd)
+            buf = ""
+        if buf:
+            line(buf, cwd)
+    mine = ("gitleaks", "gitleaks-staged", "gitleaks-commit-msg")
+    rule = re.compile(r"^([^\s#=:][^#=]*?):{1,2}(?!=)")
+    with open(os.path.join(d, b"names"), "rb") as h:
+        listed = {os.fsdecode(n) for n in h.read().split(b"\0") if n}
+    for dd in sorted(need, key=len):
+        r0 = dd[len(wr):].lstrip("/")
+        names = set(os.listdir(top + dd[len(wr):]))
+        ent = next((n for n in ents if n in names), None)
+        if ent is None or posixpath.join(r0, ent) not in listed:
+            continue
+        cwd = top + dd[len(wr):]
+        rel = dd[len(wr):].lstrip("/") or "."
+        hold = [y for m in sorted(mks) if not os.path.relpath(m, dd).startswith("..") for y in ("-o", os.path.relpath(m, dd))]
+        hold += [y for g in mine for y in ("-o", g)]
+        try:
+            db = run(["-qpR", "-f", ent, "__gitleaks_no_such_target__"], cwd, rel).stdout
+            listed_mk = re.search(r"(?m)^MAKEFILE_LIST :?= ?(.*)$", db)
+            mklist = shlex.split(listed_mk.group(1)) if listed_mk else []
+            if not listed_mk or not all(own_copy(os.path.join(cwd, m)) for m in mklist):
+                found.add(("U", ""))
+                continue
+            db = run(["-qpR", "-f", ent, "__gitleaks_no_such_target__"], cwd, rel).stdout
+            hold += [y for m in mklist for y in ("-o", m)]
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            found.add(("U", ""))
+            continue
+        if "\n# Files\n" not in db:
+            found.add(("U", ""))
+            continue
+        files = db.split("\n# Files\n", 1)[1]
+        files = re.split(r"\n# (?:files hash-table stats|VPATH Search Paths)", files)[0]
+        goals, prev = [], ""
+        for ln in files.splitlines():
+            m = rule.match(ln)
+            if m and prev != "# Not a target:":
+                g = m.group(1).strip()
+                if not g.startswith(".") and "%" not in g and g not in mine and g not in goals:
+                    goals.append(g)
+            prev = ln
+        if not goals:
+            continue
+        try:
+            p = run(["-n", "-k", "-B", "--no-print-directory", *hold, "-f", ent, *goals], cwd, rel)
+            ok = p.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            p, ok = None, False
+        if ok:
+            commands(p.stdout, rel)
+            continue
+        def one(g, cwd=cwd, rel=rel, ent=ent, hold=hold):
+            try:
+                return run(["-n", "-B", "--no-print-directory", *hold, "-f", ent, g], cwd, rel)
+            except (OSError, subprocess.TimeoutExpired):
+                return None
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for g, q in zip(goals, pool.map(one, goals)):
+                if q is None:
+                    found.add(("U", ""))
+                    continue
+                commands(q.stdout, rel)
+    for f in sorted(found):
+        sys.stdout.write("\t".join(f) + "\n")
 endef
 unexport gitleaks_stage_py
 # Every object a push publishes, read raw: each commit on a branch, a tag or HEAD, and every annotated
@@ -2846,8 +3293,8 @@ gitleaks: ## secret scan over FULL HISTORY, what an image build sends, + the com
 	@# SHELL or .SHELLFLAGS from outside, a CURDIR on the command line, and at the top level a LUXLINT or
 	@# LUXLINT_IMAGE from outside (`GITLEAKS_IMAGE` cannot be set at all) are refused before any pass runs,
 	@# on the first line, a `+` line: make runs it under -t too, and under .ONESHELL the first line's
-	@# prefix is the recipe's. Stated limits: under `make check`, a variable that reached the environment
-	@# of a leg is the gate's stated limit, since a bare `export` in the makefile looks the same, and a
+	@# prefix is the recipe's. Under `make check`, a variable that reached the environment of a leg
+	@# is not told apart from the makefile's own, since a bare `export` in it looks the same, and a
 	@# MAKELEVEL from outside looks like a leg. `-o` and `-n` from outside never reach a recipe (the
 	@# emitted git hooks clear make's flags), and an untracked Makefile.local can say `.IGNORE`.
 	@# A shallow clone and a graft file each make git (and so every pass) read part of the history,
@@ -2865,7 +3312,7 @@ gitleaks: ## secret scan over FULL HISTORY, what an image build sends, + the com
 	@# directory it scans and from its ignore path, and both are that empty directory, so no file in the
 	@# checkout (tracked, untracked or excluded) waives a finding. A leak that reached history is
 	@# removed from it, never waived.
-	@set -e; $(GITLEAKS_HISTORY_ENV) C=$$(mktemp); O=$$(mktemp); E=$$(mktemp -d); trap 'rm -rf "$$C" "$$O" "$$E"' EXIT INT TERM; \
+	@set -e; $(GITLEAKS_HISTORY_ENV) C=$$(mktemp); O=$$(mktemp); E=$$(mktemp -d); trap 'trap "" HUP INT TERM; rm -rf "$$C" "$$O" "$$E"' EXIT; trap 'trap "" HUP INT TERM; exit 1' HUP INT TERM; \
 	[ "$$(git rev-parse --is-shallow-repository)" = false ] || { echo "REFUSING: this clone is shallow, so the scan would read only part of the published history: run git fetch --unshallow first."; exit 1; }; \
 	if [ -n "$$(git config --get extensions.partialClone)" ] || git config --type=bool --get-regexp '^remote\..*\.promisor$$' | grep -q ' true$$'; then \
 	  echo "REFUSING: this is a partial clone, so the scan cannot read the blobs it lacks: clone the repository in full first."; exit 1; fi; \
@@ -2891,7 +3338,7 @@ gitleaks: ## secret scan over FULL HISTORY, what an image build sends, + the com
 	@# Which paths are binary is read from an empty work tree, run there, as the history scan reads
 	@# them, so a `.gitattributes` in the checkout (committed or not) calls no file text here that the
 	@# scan saw no patch for.
-	@set -e; $(GITLEAKS_HISTORY_ENV) C=$$(mktemp); D=$$(mktemp -d); trap 'rm -rf "$$C" "$$D"' EXIT INT TERM; \
+	@set -e; $(GITLEAKS_HISTORY_ENV) C=$$(mktemp); D=$$(mktemp -d); trap 'trap "" HUP INT TERM; rm -rf "$$C" "$$D"' EXIT; trap 'trap "" HUP INT TERM; exit 1' HUP INT TERM; \
 	docker run --rm -v '$(subst ','\'',$(CURDIR))':/repo $(LUXLINT) --emit-config gitleaks > "$$C"; \
 	mkdir "$$D/t" "$$D/none"; \
 	git log --branches --tags HEAD --format= --name-only -z --root --diff-merges=first-parent > "$$D/names"; \
@@ -2918,7 +3365,7 @@ gitleaks: ## secret scan over FULL HISTORY, what an image build sends, + the com
 	@# v13: every commit and annotated-tag MESSAGE, scanned as a file with the same config (credential
 	@# rules and the denylist). One `git log` and one `for-each-ref`, split on a header line carrying a
 	@# per-run nonce, so a message cannot forge a header and steer its own lines out of the scan.
-	@set -e; $(GITLEAKS_HISTORY_ENV) C=$$(mktemp); D=$$(mktemp -d); trap 'rm -rf "$$C" "$$D"' EXIT INT TERM; \
+	@set -e; $(GITLEAKS_HISTORY_ENV) C=$$(mktemp); D=$$(mktemp -d); trap 'trap "" HUP INT TERM; rm -rf "$$C" "$$D"' EXIT; trap 'trap "" HUP INT TERM; exit 1' HUP INT TERM; \
 	docker run --rm -v '$(subst ','\'',$(CURDIR))':/repo $(LUXLINT) --emit-config gitleaks > "$$C"; \
 	N=$$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n'); [ $${#N} -eq 32 ]; \
 	mkdir -p "$$D/t/commit-message" "$$D/t/tag-message" "$$D/t/mergetag-message" "$$D/none"; \
@@ -2940,7 +3387,7 @@ gitleaks: ## secret scan over FULL HISTORY, what an image build sends, + the com
 	@# v14: what a push publishes besides content and messages: every file PATH in history and every
 	@# branch and tag NAME. A path is not a patch line, so `gitleaks git` never read one, and a file or
 	@# a branch named for an internal host passed every gate into a public remote.
-	@set -e; $(GITLEAKS_HISTORY_ENV) C=$$(mktemp); D=$$(mktemp -d); trap 'rm -rf "$$C" "$$D"' EXIT INT TERM; \
+	@set -e; $(GITLEAKS_HISTORY_ENV) C=$$(mktemp); D=$$(mktemp -d); trap 'trap "" HUP INT TERM; rm -rf "$$C" "$$D"' EXIT; trap 'trap "" HUP INT TERM; exit 1' HUP INT TERM; \
 	docker run --rm -v '$(subst ','\'',$(CURDIR))':/repo $(LUXLINT) --emit-config gitleaks > "$$C"; \
 	mkdir -p "$$D/t" "$$D/none"; \
 	git -c core.quotePath=false -c color.ui=never log --branches --tags HEAD --format= --name-only \
@@ -2966,18 +3413,24 @@ gitleaks: ## secret scan over FULL HISTORY, what an image build sends, + the com
 	@# the context's `.dockerignore`. The builds are the ones the image block declares
 	@# (`gitleaks_declared` above), and each other Dockerfile git holds or would add (`Dockerfile`,
 	@# `Dockerfile.*`, `*.Dockerfile`, `*.dockerfile`, `Containerfile`, `*.Containerfile`; tracked, or
-	@# untracked and not gitignored) at its
-	@# own directory, the context a build of that directory gives it. A context outside the checkout is
+	@# untracked and not gitignored) at each context a makefile recipe builds it from, as make prints
+	@# the recipe (`gitleaks_stage_py`'s `builds`): a recipe building `-f apps/b/Dockerfile.lint` from `.`
+	@# has it read at the root, under the root's ignore file. Every recipe that builds it is read, so several
+	@# contexts are each judged. One no recipe builds is read at its own directory, the context a build
+	@# of that directory gives it. One a recipe builds from a context it cannot read (a shell variable,
+	@# a `cd` to one, stdin), or a build command it cannot read at all, is read at its own directory and
+	@# at the checkout root, beside the contexts it can. A context outside the checkout is
 	@# refused. With no Dockerfile and no declared build, the untracked files git would add and the
-	@# files changed against HEAD (staged included) are read instead: one commit puts them in history. What is sent is copied out and scanned by path, NULs stripped as the binary
-	@# pass does. git reads this checkout as the work tree, whatever `core.worktree` the repository
-	@# sets. Stated limits: a build the image block does not declare (a
-	@# hand-written build (`-f docker/Dockerfile .`), a compose `build.context: .` for a nested
-	@# Dockerfile) is judged at its
-	@# Dockerfile's directory, a gitignored Dockerfile is not found, and the pass needs `docker buildx`
+	@# files changed against HEAD (staged included) are read instead: one commit puts them in history.
+	@# What is sent is copied out and scanned by path, NULs stripped as the binary pass does. git reads
+	@# this checkout as the work tree, whatever `core.worktree` the repository sets. A
+	@# build no makefile recipe runs (a compose `build.context: .` for a nested Dockerfile, a script a
+	@# recipe calls, a sub-make's own arguments) is judged at its Dockerfile's directory, a gitignored
+	@# Dockerfile is not found, a `$(LUXLINT)` image with no make reads every undeclared
+	@# Dockerfile at its own directory (a note says so), and the pass needs `docker buildx`
 	@# wherever there is a Dockerfile. The host tools it runs (`cut`, `sort -u`, `dirname --`, `find
 	@# -print0`, `tr`, `sed`) are POSIX (`-print0` since POSIX.1-2024), and macOS ships each of them.
-	@set -e; $(GITLEAKS_HISTORY_ENV) unset GIT_INDEX_FILE; C=$$(mktemp); D=$$(mktemp -d); trap 'rm -rf "$$C" "$$D"' EXIT INT TERM; \
+	@set -e; $(GITLEAKS_HISTORY_ENV) unset GIT_INDEX_FILE; C=$$(mktemp); D=$$(mktemp -d); trap 'trap "" HUP INT TERM; rm -rf "$$C" "$$D"' EXIT; trap 'trap "" HUP INT TERM; exit 1' HUP INT TERM; \
 	docker run --rm -v '$(subst ','\'',$(CURDIR))':/repo $(LUXLINT) --emit-config gitleaks > "$$C"; \
 	mkdir "$$D/t" "$$D/s" "$$D/none" "$$D/df"; : > "$$D/seen"; : > "$$D/sent"; T=$$(printf '\t'); \
 	W='$(subst ','\'',$(CURDIR))'; A=$$(git -C "$$W" rev-parse --absolute-git-dir); \
@@ -3001,8 +3454,16 @@ gitleaks: ## secret scan over FULL HISTORY, what an image build sends, + the com
 	  docker buildx version > /dev/null 2>&1 || { echo "REFUSING: this repository has a Dockerfile or declares a build, and docker buildx is not installed, so what an image build sends cannot be staged for the scan: install it."; exit 1; }; \
 	  stage farm; printf 'FROM scratch\nCOPY . /\n' > "$$D/df/Dockerfile"; \
 	  LC_ALL=C cut -f 2 "$$D/builds" | LC_ALL=C sed 's|^\(\./\)*||' > "$$D/used"; \
+	  docker run --rm --network none -v "$$W":/w:ro -v "$$D":/d:ro --entrypoint python3 $(LUXLINT) -c "$$GITLEAKS_STAGE_PY" builds /w /d > "$$D/made" \
+	    || { echo "note: make could not be asked which builds the makefiles run, so each Dockerfile the image block does not declare is read at its own directory."; : > "$$D/made"; }; \
 	  while IFS= read -r f; do \
-	    LC_ALL=C grep -qxF -- "$$f" "$$D/used" || printf '%s\t%s\n' "$$(dirname -- "$$f")" "$$f" >> "$$D/builds"; \
+	    ! LC_ALL=C grep -qxF -- "$$f" "$$D/used" || continue; \
+	    F="$$f" LC_ALL=C awk -F "$$T" '$$3 == ENVIRON["F"] && $$1 == "B" { print $$2 FS $$3 } $$3 == ENVIRON["F"] && $$1 == "N" && $$2 != "U" { print $$2 FS }' "$$D/made" > "$$D/mine"; \
+	    cat "$$D/mine" >> "$$D/builds"; \
+	    LC_ALL=C grep -q . "$$D/mine" || printf '%s\t%s\n' "$$(dirname -- "$$f")" "$$f" >> "$$D/builds"; \
+	    if F="$$f" LC_ALL=C awk -F "$$T" '$$1 == "U" && ($$2 == "" || $$2 == ENVIRON["F"] || substr(ENVIRON["F"], length(ENVIRON["F"]) - length($$2)) == "/" $$2) { u = 1 } $$1 == "N" && $$2 == "U" && $$3 == ENVIRON["F"] { u = 1 } END { exit !u }' "$$D/made"; then \
+	      printf '%s\t%s\n' "$$(dirname -- "$$f")" "$$f" . "$$f" >> "$$D/builds"; \
+	    fi; \
 	  done < "$$D/dockerfiles"; \
 	  while IFS="$$T" read -r c f; do \
 	    case "$$c" in -|*://*|git@*) continue ;; esac; \
@@ -3042,7 +3503,7 @@ gitleaks: ## secret scan over FULL HISTORY, what an image build sends, + the com
 	@# Walks what THIS repo publishes (branches, tags, HEAD), NOT `--all`: a remote-tracking ref caches the
 	@# remote's state, which during a scrub is by definition the un-rewritten history you are about to
 	@# force-push over — `--all` refused the verified fix, and any `git fetch` re-armed it.
-	@$(if $(filter environment% command,$(origin GIT_IDENTITY_OK)),$(error REFUSING: GIT_IDENTITY_OK comes from the $(origin GIT_IDENTITY_OK), so the caller chose which authors pass the identity pass: set it in the makefile))set -e; $(GITLEAKS_HISTORY_ENV) unset GIT_INDEX_FILE; I="$$(mktemp)"; Y="$$(mktemp -d)"; trap 'rm -rf "$$I" "$$Y"' EXIT INT TERM; \
+	@$(if $(filter environment% command,$(origin GIT_IDENTITY_OK)),$(error REFUSING: GIT_IDENTITY_OK comes from the $(origin GIT_IDENTITY_OK), so the caller chose which authors pass the identity pass: set it in the makefile))set -e; $(GITLEAKS_HISTORY_ENV) unset GIT_INDEX_FILE; I="$$(mktemp)"; Y="$$(mktemp -d)"; trap 'trap "" HUP INT TERM; rm -rf "$$I" "$$Y"' EXIT; trap 'trap "" HUP INT TERM; exit 1' HUP INT TERM; \
 	for f in $(foreach f,$(MAKEFILE_LIST),'$(subst ','\'',$(f))'); do \
 	  if ! git -C "$$(dirname "$$f")" --work-tree=. ls-files --error-unmatch -- "$$(basename "$$f")" >/dev/null 2>&1 && ! grep -q "luxarch:gitleaks asset" "$$f" && grep -Eq '^[[:space:]]*((override|export)[[:space:]]+)*GIT_IDENTITY_OK[[:space:]]*[:?+!]*=' "$$f"; then \
 	    echo "REFUSING: $$f sets GIT_IDENTITY_OK and git does not track it, so this machine chose which authors pass the identity pass: set it in the committed makefile."; exit 1; \
@@ -3090,7 +3551,7 @@ gitleaks: ## secret scan over FULL HISTORY, what an image build sends, + the com
 # with that name, copied to the scan root, is renamed there before the scan and scanned like any file.
 gitleaks-staged: ## secret scan of the STAGED changes (run by hooks/pre-commit)
 	+@$(gitleaks_refusals)true
-	@set -e; C=$$(mktemp); D=$$(mktemp -d); trap 'rm -rf "$$C" "$$D"' EXIT INT TERM; \
+	@set -e; C=$$(mktemp); D=$$(mktemp -d); trap 'trap "" HUP INT TERM; rm -rf "$$C" "$$D"' EXIT; trap 'trap "" HUP INT TERM; exit 1' HUP INT TERM; \
 	docker run --rm -v '$(subst ','\'',$(CURDIR))':/repo $(LUXLINT) --emit-config gitleaks > "$$C"; \
 	mkdir "$$D/t" "$$D/none"; \
 	git -c core.quotePath=false diff --cached --name-only --diff-filter=ACMRT -z > "$$D/names"; \
@@ -3120,7 +3581,7 @@ gitleaks-commit-msg: ## secret + denylist scan of the commit MESSAGE being writt
 	  echo "  passes the file git hands it; re-emit the hooks with luxlint --emit-hooks." >&2; \
 	  exit 1; \
 	fi; \
-	C=$$(mktemp); D=$$(mktemp -d); trap 'rm -rf "$$C" "$$D"' EXIT INT TERM; \
+	C=$$(mktemp); D=$$(mktemp -d); trap 'trap "" HUP INT TERM; rm -rf "$$C" "$$D"' EXIT; trap 'trap "" HUP INT TERM; exit 1' HUP INT TERM; \
 	docker run --rm -v '$(subst ','\'',$(CURDIR))':/repo $(LUXLINT) --emit-config gitleaks > "$$C"; \
 	mkdir -p "$$D/t/commit-message" "$$D/none"; \
 	LC_ALL=C tr -d '\000' < "$$M" > "$$D/t/commit-message/COMMIT_EDITMSG"; \
@@ -3132,7 +3593,7 @@ gitleaks-commit-msg: ## secret + denylist scan of the commit MESSAGE being writt
 	  exit 1; }
 
 .PHONY: check
-# luxarch:check-gate asset v5 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit check-gate`.
+# luxarch:check-gate asset v6 - DO NOT edit this marker line; it is how repo.emitted_assets_current knows your copy is current. Re-emit with `luxarch --emit check-gate`.
 # ── The fleet gate: every leg runs, then the gate fails naming each red leg ───────────────────────
 # Emitted by `luxarch --emit check-gate`; it replaces a hand-written `check:` line. A gate written as a
 # prerequisite list (`check: … lint mypy test arch …`) stops at the FIRST failing leg: one ruff finding
@@ -3165,7 +3626,7 @@ gitleaks-commit-msg: ## secret + denylist scan of the commit MESSAGE being writt
 # GNUMAKEFLAGS given as a command-line variable is refused, and MAKE and SHELL are checked as the
 # recipe runs: make's own MAKE, and a POSIX shell.
 # Under `make -n` the legs dry-run (each sub-make prints its commands) and the gate exits 1 with no
-# verdict: nothing ran, so nothing passed. Stated limits: a second makefile given with `-f` is part
+# verdict: nothing ran, so nothing passed. A second makefile given with `-f` is part
 # of the makefile as far as make can tell, and a variable a leg runs that the makefile sets with `?=`
 # or never sets (an image, a tool, its arguments) takes a value from the environment; the gate can
 # tell neither from your own. `make -o check`, or `-o` in MAKEFLAGS in the environment, marks `check`

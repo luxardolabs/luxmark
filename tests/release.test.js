@@ -11,7 +11,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -25,6 +25,8 @@ const GHCR = 'ghcr.io/luxardolabs/luxmark';
 
 // MANIFEST: notfound | exists | unreachable   SCAN: pass | fail   DIGEST_OUT: what the digest read returns
 // MANIFEST_EXISTS: a ref prefix that exists whatever MANIFEST says (the private :VERSION for release-public)
+// DIGEST_GHCR: what the digest read returns for a ghcr.io ref (default: DIGEST_OUT's answer)
+// DIGEST_LATEST: the same for ghcr.io :latest (default: DIGEST_GHCR's answer)
 // PLATS: amd64only makes the candidate's arm64 image unpullable
 const FAKE_DOCKER = `#!/bin/sh
 echo "docker $*" >> "$DOCKER_LOG"
@@ -38,6 +40,8 @@ case "$1 $2" in
     esac ;;
   "buildx imagetools")
     case "$*" in
+      *inspect*ghcr.io*:latest*Manifest.Digest.Encoded*) echo "\${DIGEST_LATEST:-\${DIGEST_GHCR:-\${DIGEST_OUT:-${HEX}}}}" ;;
+      *inspect*ghcr.io*Manifest.Digest.Encoded*) echo "\${DIGEST_GHCR:-\${DIGEST_OUT:-${HEX}}}" ;;
       *inspect*Manifest.Digest.Encoded*) echo "\${DIGEST_OUT:-${HEX}}" ;;
       *inspect*Manifest.MediaType*) echo 'application/vnd.oci.image.index.v1+json' ;;
       *inspect*Platform.OS*) echo 'linux/amd64 linux/arm64 ' ;;
@@ -67,7 +71,11 @@ case "$1 $2" in
     if [ "$GH_EXISTS" = draft ]; then echo "$3 true"; exit 0; fi
     if [ "$GH_EXISTS" = yes ] || { [ -f "$created" ] && [ "$GH_GHOST" != yes ]; }; then echo "$3 false"; exit 0; fi
     exit 1 ;;
-  "release create") : > "$created"; exit 0 ;;
+  "release create")
+    : > "$created"
+    # Keep what was published: the notes file gh was handed may be a temp file removed after.
+    prev=; for a in "$@"; do [ "$prev" = --notes-file ] && cp "$a" "$(dirname "$DOCKER_LOG")/gh-notes"; prev=$a; done
+    exit 0 ;;
 esac
 if [ "$1" = images ] && [ -n "$LOCAL_TAGS" ]; then echo "$LOCAL_TAGS"; exit 0; fi
 if [ "$1" = run ] && [ -n "$GUARD_FAIL" ]; then exit 1; fi
@@ -139,7 +147,9 @@ function release({ manifest = 'notfound', scan = 'pass', plats = 'both', tag = t
     env: { ...process.env, HOME: sb.parent, PATH: `${sb.parent}:${process.env.PATH}`, DOCKER_LOG: log, MANIFEST: manifest, SCAN: scan, PLATS: plats, SANDBOX_ORIGIN: join(sb.parent, 'origin.git'), FAIL_STATUS: failStatus ? '1' : '', ...env },
   });
   const calls = readFileSync(log, 'utf8').split('\n').filter(Boolean);
-  return { ...sb, status: r.status, out: r.stdout + r.stderr, calls, trace: calls.join('\n') };
+  const notesFile = join(sb.parent, 'gh-notes');
+  const notes = existsSync(notesFile) ? readFileSync(notesFile, 'utf8') : null;
+  return { ...sb, status: r.status, out: r.stdout + r.stderr, calls, notes, trace: calls.join('\n') };
 }
 
 // An older release, tagged on origin with its own notes: the version a stale MANUAL_VERSION would name.
@@ -225,7 +235,7 @@ test('release-public rescans the released digest, then creates GHCR :VERSION and
   assert.ok(r.calls.indexOf(promote[0]) > r.calls.lastIndexOf(s.at(-1)), `the rescan runs before the copy\n${r.trace}`);
   const ghCreate = r.calls.findIndex((c) => c.startsWith('gh release create'));
   assert.ok(ghCreate > r.calls.indexOf(promote[0]), `the GitHub Release follows the public copy\n${r.trace}`);
-  assert.match(r.calls[ghCreate], new RegExp(`--notes-file src/release_notes/${VERSION}\\.md`));
+  assert.equal(r.notes, `# ${VERSION}\n`, `it publishes this version's notes\n${r.trace}`);
 });
 
 test('every gh release call names origin\'s GitHub repository', () => {
@@ -749,7 +759,53 @@ test('the release publishes its own notes, never a file the environment names', 
   assert.equal(r.status, 0, r.out);
   const create = r.calls.filter((c) => c.startsWith('gh release create'));
   assert.equal(create.length, 1, r.trace);
-  assert.match(create[0], new RegExp(`--notes-file src/release_notes/${VERSION}\\.md`));
+  assert.equal(r.notes, `# ${VERSION}\n`, `it publishes this version's notes, not the Dockerfile\n${r.trace}`);
+});
+
+// A standalone `make gh-release`, the block's recovery for a missing Release: every public ref exists.
+const GH_ALONE = { target: 'gh-release', manifest: 'exists' };
+const ghCreates = (r) => r.calls.filter((c) => c.startsWith('gh release create'));
+
+// gh-release publishes only when public :VERSION (and :latest) hold the released digest.
+test('make gh-release with public :VERSION and :latest at the released digest publishes the Release', () => {
+  const r = release(GH_ALONE);
+  assert.equal(r.status, 0, r.out);
+  assert.equal(ghCreates(r).length, 1, r.trace);
+});
+
+test('make gh-release with GHCR :VERSION at another digest than the release publishes no Release', () => {
+  const r = release({ ...GH_ALONE, env: { DIGEST_GHCR: 'cd'.repeat(32) } });
+  assert.notEqual(r.status, 0, r.out);
+  assert.deepEqual(ghCreates(r), [], r.trace);
+  assert.match(r.out, /PUBLISHED at another digest/);
+});
+
+// The partial copy: public :VERSION written, :latest still on the previous release.
+test('make gh-release with GHCR :latest still on the previous release publishes no Release', () => {
+  const r = release({ ...GH_ALONE, env: { DIGEST_LATEST: 'cd'.repeat(32) } });
+  assert.notEqual(r.status, 0, r.out);
+  assert.deepEqual(ghCreates(r), [], r.trace);
+  assert.match(r.out, /release-public PUBLIC_RESUME=1/);
+});
+
+// The Release publishes the notes v<VERSION> holds, never the working tree's.
+test('make gh-release publishes the tagged notes, not an uncommitted edit to them', () => {
+  const setup = ({ dir }) => writeFileSync(join(dir, 'src', 'release_notes', `${VERSION}.md`), '# edited, uncommitted\n');
+  const r = release({ ...GH_ALONE, setup });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(ghCreates(r).length, 1, r.trace);
+  assert.equal(r.notes, `# ${VERSION}\n`, r.trace);
+});
+
+test('make gh-release publishes the tagged notes, not ones rewritten in a commit after the tag', () => {
+  const setup = ({ dir }) => {
+    writeFileSync(join(dir, 'src', 'release_notes', `${VERSION}.md`), '# rewritten after the tag\n');
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qam', 'later notes'], { cwd: dir });
+  };
+  const r = release({ ...GH_ALONE, setup });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(ghCreates(r).length, 1, r.trace);
+  assert.equal(r.notes, `# ${VERSION}\n`, r.trace);
 });
 
 const PROD_LOCAL = 'LUX_REGISTRY := reg.test\nPROD_JUMP := jump.test\nPROD_NODE := 10.9.9.9\nPROD_DIR := /opt/x\nPROD_URL := http://127.0.0.1:9\n';

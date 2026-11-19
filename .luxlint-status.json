@@ -1,6 +1,6 @@
 {
   "guard": "luxlint",
-  "guard_version": "0.77.0",
+  "guard_version": "0.81.0",
   "repo": "/repo",
   "source": [
     "src/js"
@@ -72,19 +72,21 @@
     },
     {
       "rule": "lint.ruff",
-      "status": "PASS",
+      "status": "INERT",
       "since": "0.1.0",
       "violations": 0,
       "sites": [],
-      "deferred": false
+      "deferred": false,
+      "inert_reason": "no first-party Python for ruff: no .py, .pyi or .ipynb under [source].paths or the test dirs, or every one is excluded ([source].exclude, the canonical fixture excludes); lint.source_declared reds any .py the gate does not cover"
     },
     {
       "rule": "lint.format",
-      "status": "PASS",
+      "status": "INERT",
       "since": "0.1.0",
       "violations": 0,
       "sites": [],
-      "deferred": false
+      "deferred": false,
+      "inert_reason": "no first-party Python for ruff: no .py, .pyi or .ipynb under [source].paths or the test dirs, or every one is excluded ([source].exclude, the canonical fixture excludes); lint.source_declared reds any .py the gate does not cover"
     },
     {
       "rule": "lint.eslint",
@@ -104,11 +106,12 @@
     },
     {
       "rule": "lint.source_declared",
-      "status": "PASS",
+      "status": "INERT",
       "since": "0.38.0",
       "violations": 0,
       "sites": [],
-      "deferred": false
+      "deferred": false,
+      "inert_reason": "no first-party Python: no .py outside vendored, fixture, gitignored and emitted agent-tooling dirs, and no [source].exclude entry to check"
     },
     {
       "rule": "test.suite_exists",
@@ -164,19 +167,21 @@
     },
     {
       "rule": "docs.coverage",
-      "status": "PASS",
+      "status": "INERT",
       "since": "0.5.0",
       "violations": 0,
       "sites": [],
-      "deferred": false
+      "deferred": false,
+      "inert_reason": "docstring checks are opt-in and this repo's `[docs]` block does not enable this one"
     },
     {
       "rule": "docs.substantive",
-      "status": "PASS",
+      "status": "INERT",
       "since": "0.5.0",
       "violations": 0,
       "sites": [],
-      "deferred": false
+      "deferred": false,
+      "inert_reason": "docstring checks are opt-in and this repo's `[docs]` block does not enable this one"
     },
     {
       "rule": "docs.markdown_format",
@@ -196,13 +201,13 @@
     }
   ],
   "summary": {
-    "PASS": 19,
+    "PASS": 14,
     "FAIL": 0,
     "XFAIL": 0,
     "XPASS": 0,
-    "INERT": 4
+    "INERT": 9
   },
   "mypy": "separate: `luxlint --mypy` ([mypy].baseline ratchet)",
-  "commit": "5491923ba4cc71df7be5b9e001512eb21255f72d",
-  "generated_at": "2026-11-10T05:32:47Z"
+  "commit": "c353428dc408cf14f99cd43db5a0436be5cc5bbd",
+  "generated_at": "2026-11-19T01:42:49Z"
 }

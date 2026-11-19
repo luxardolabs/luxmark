@@ -1,12 +1,12 @@
 {
   "guard": "luxaudit",
-  "guard_version": "0.17.0",
+  "guard_version": "0.20.0",
   "repo": "/repo",
   "inert": true,
   "inert_reason": "static-web app: no Python anywhere. Dependencies are 16 CDN <script>/<link> tags in src/index.html, each pinned to an immutable version and SRI-verified \u2014 enforced by luxarch's static.external_deps_pinned + static.external_deps_integrity, which is the right altitude for a markup-declared supply chain.",
   "summary": {
     "PASS": 0,
-    "FAIL": 0,
+    "FAIL": 3,
     "XFAIL": 0,
     "INERT": 1
   },
@@ -16,7 +16,38 @@
     "inert_reason": "",
     "error": "",
     "not_released": [],
-    "vulnerable": [],
+    "vulnerable": [
+      {
+        "package": "libxslt",
+        "installed": "1.1.43-r3",
+        "vuln_id": "CVE-2026-125350",
+        "severity": "HIGH",
+        "layer": "os",
+        "path": "",
+        "image": "ghcr.io/luxardolabs/luxmark:2026.11.0",
+        "fix": "1.1.43-r4"
+      },
+      {
+        "package": "libxslt",
+        "installed": "1.1.43-r3",
+        "vuln_id": "CVE-2026-87636",
+        "severity": "HIGH",
+        "layer": "os",
+        "path": "",
+        "image": "ghcr.io/luxardolabs/luxmark:2026.11.0",
+        "fix": "1.1.43-r4"
+      },
+      {
+        "package": "libxslt",
+        "installed": "1.1.43-r3",
+        "vuln_id": "CVE-2026-9947",
+        "severity": "HIGH",
+        "layer": "os",
+        "path": "",
+        "image": "ghcr.io/luxardolabs/luxmark:2026.11.0",
+        "fix": "1.1.43-r4"
+      }
+    ],
     "deferred": []
   },
   "ignore_rows": {
@@ -24,6 +55,6 @@
     "expired": [],
     "unjudged": []
   },
-  "commit": "5491923ba4cc71df7be5b9e001512eb21255f72d",
-  "generated_at": "2026-11-10T05:32:47Z"
+  "commit": "c353428dc408cf14f99cd43db5a0436be5cc5bbd",
+  "generated_at": "2026-11-19T01:42:49Z"
 }
