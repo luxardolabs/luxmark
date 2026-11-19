@@ -9,12 +9,17 @@ CONTRIBUTING.md
 CHANGELOG.md
 LICENSE
 
-# Agent instructions and tooling, kept local (CLAUDE.md is untracked and names internal hosts).
-# The build context is the checkout root, so without these the builder receives them.
-CLAUDE.md
-AGENTS.md
-.claude/
-Makefile.local
+# Agent instructions and tooling, kept local at any depth (CLAUDE.md is untracked and names internal
+# hosts). The build context is the checkout root, and `COPY src/js/` takes whole directories.
+**/CLAUDE.md
+**/AGENTS.md
+**/.claude/
+**/Makefile.local
+
+# docker/ also holds local-only config git never sees: send only what the Dockerfile copies.
+docker/*
+!docker/nginx-main.conf
+!docker/nginx.conf
 
 # Docker files
 Dockerfile

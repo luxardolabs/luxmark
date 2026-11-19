@@ -612,8 +612,27 @@ test('every file .gitignore ignores is kept out of the image\'s build context, a
   const ignored = readFileSync(join(root, '.gitignore'), 'utf8').split('\n').map((l) => l.trim())
     .filter((l) => l && !l.startsWith('#') && !l.startsWith('!') && !l.includes('/'));
   const docker = new Set(readFileSync(join(root, '.dockerignore'), 'utf8').split('\n').map((l) => l.trim()));
-  const missing = ignored.filter((p) => !docker.has(`**/${p}`) && p !== 'Makefile.local');
+  const missing = ignored.filter((p) => !docker.has(`**/${p}`));
   assert.deepEqual(missing, [], 'add **/<pattern> to .dockerignore');
+});
+
+test('local agent files are kept out of the build context at any depth', () => {
+  // Claude Code reads a CLAUDE.md or .claude/ in any directory, and the owner keeps them out of git;
+  // a root-only pattern lets src/js/CLAUDE.md reach the image through `COPY src/js/`.
+  const docker = new Set(readFileSync(join(root, '.dockerignore'), 'utf8').split('\n').map((l) => l.trim()));
+  const missing = ['**/CLAUDE.md', '**/AGENTS.md', '**/.claude/', '**/Makefile.local'].filter((p) => !docker.has(p));
+  assert.deepEqual(missing, [], 'add these to .dockerignore');
+});
+
+test('the build context holds only the docker/ files the Dockerfile copies', () => {
+  // docker/ also holds local-only config (production site files) that git never sees, so the
+  // context takes docker/ as an allowlist of exactly what the image needs.
+  const lines = readFileSync(join(root, '.dockerignore'), 'utf8').split('\n').map((l) => l.trim());
+  assert.ok(lines.includes('docker/*'), 'exclude docker/* in .dockerignore');
+  const copied = [...readFileSync(join(root, 'Dockerfile'), 'utf8').matchAll(/^COPY\s+(docker\/\S+)/gm)].map((m) => m[1]);
+  assert.ok(copied.length > 0, 'the Dockerfile copies from docker/');
+  const allowed = lines.filter((l) => l.startsWith('!docker/')).map((l) => l.slice(1));
+  assert.deepEqual(allowed.sort(), copied.sort(), 'allow exactly the docker/ files the Dockerfile copies');
 });
 
 const anyPush = (calls) => builds(calls).concat(promotions(calls), pushes(calls));
