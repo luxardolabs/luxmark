@@ -6,48 +6,19 @@
   "inert_reason": "static-web app: no Python anywhere. Dependencies are 16 CDN <script>/<link> tags in src/index.html, each pinned to an immutable version and SRI-verified \u2014 enforced by luxarch's static.external_deps_pinned + static.external_deps_integrity, which is the right altitude for a markup-declared supply chain.",
   "summary": {
     "PASS": 0,
-    "FAIL": 3,
+    "FAIL": 0,
     "XFAIL": 0,
-    "INERT": 1
+    "INERT": 2
   },
   "image": {
-    "ref": "ghcr.io/luxardolabs/luxmark:2026.11.0",
-    "inert": false,
-    "inert_reason": "",
+    "ref": "ghcr.io/luxardolabs/luxmark:2026.11.1",
+    "inert": true,
+    "inert_reason": "ghcr.io/luxardolabs/luxmark:2026.11.1: not in the registry, so nothing was released at this VERSION. A deploy that pins `:sha-\u2026` is not visible from the mount; name it in `[image] refs`",
     "error": "",
-    "not_released": [],
-    "vulnerable": [
-      {
-        "package": "libxslt",
-        "installed": "1.1.43-r3",
-        "vuln_id": "CVE-2026-125350",
-        "severity": "HIGH",
-        "layer": "os",
-        "path": "",
-        "image": "ghcr.io/luxardolabs/luxmark:2026.11.0",
-        "fix": "1.1.43-r4"
-      },
-      {
-        "package": "libxslt",
-        "installed": "1.1.43-r3",
-        "vuln_id": "CVE-2026-87636",
-        "severity": "HIGH",
-        "layer": "os",
-        "path": "",
-        "image": "ghcr.io/luxardolabs/luxmark:2026.11.0",
-        "fix": "1.1.43-r4"
-      },
-      {
-        "package": "libxslt",
-        "installed": "1.1.43-r3",
-        "vuln_id": "CVE-2026-9947",
-        "severity": "HIGH",
-        "layer": "os",
-        "path": "",
-        "image": "ghcr.io/luxardolabs/luxmark:2026.11.0",
-        "fix": "1.1.43-r4"
-      }
+    "not_released": [
+      "ghcr.io/luxardolabs/luxmark:2026.11.1"
     ],
+    "vulnerable": [],
     "deferred": []
   },
   "ignore_rows": {
@@ -55,6 +26,6 @@
     "expired": [],
     "unjudged": []
   },
-  "commit": "80d2be5c5b6db444f8a9a2a4447da1af5ba25b8c",
-  "generated_at": "2026-11-19T02:37:34Z"
+  "commit": "2b77e3c48dc742cf2d85e3c773ae5d7afeea7c78",
+  "generated_at": "2026-11-19T03:14:31Z"
 }
