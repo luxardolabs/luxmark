@@ -14,10 +14,10 @@ services:
     restart: unless-stopped
     # When the host runs out of memory, the kernel kills a test or guard container (+500) first.
     oom_score_adj: -500
-    ports:
-      # Loopback by default: the edge reaches the container over the docker network, so a 0.0.0.0
-      # publish only let the LAN bypass it. Self-hosting on a LAN: set LUXMARK_BIND=0.0.0.0 in .env.
-      - "${LUXMARK_BIND:-127.0.0.1}:${PORT:-8080}:8080"
+    # No host port: every edge reaches nginx over the docker network on 8080, and a publish would let
+    # the host's network reach it around the edge. To serve it on a host port, use `docker run -p`.
+    expose:
+      - "8080"
     environment:
       - NGINX_WORKER_PROCESSES=auto
       - NGINX_WORKER_CONNECTIONS=1024
@@ -36,12 +36,16 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-    # The OVH edge proxies luxmark.luxardolabs.com to http://luxmark:8080 on the shared network
-    # (nginx-ovh conf.d/luxmark.luxardolabs.com.conf), so the container answers to that alias.
+    # The edge network comes from the env file. Prod (.env): the shared `luxardolabs` network, where the
+    # OVH edge proxies luxmark.luxardolabs.com to http://luxmark:8080 (nginx-ovh
+    # conf.d/luxmark.luxardolabs.com.conf), so the container answers to that alias. Dev (.env.dev):
+    # EDGE_NETWORK=dev-edge and EDGE_IPV4, the address infra pinned in its dev-edge table,
+    # which the dev edge proxies dev-luxmark.luxardolabs.com to. Unset, compose pins no address.
     networks:
-      luxardolabs:
+      edge:
         aliases:
           - luxmark
+        ipv4_address: ${EDGE_IPV4:-}
     deploy:
       resources:
         limits:
@@ -52,5 +56,6 @@ services:
           memory: 32M
 
 networks:
-  luxardolabs:
+  edge:
+    name: ${EDGE_NETWORK:-luxardolabs}
     external: true

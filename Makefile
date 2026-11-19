@@ -183,9 +183,13 @@ PLATFORMS        := $(PLATFORM)
 BUILD_CONTEXT    := .
 DOCKERFILE       := Dockerfile
 BUILD_ARGS       := --build-arg BUILD_VERSION=$(VERSION) --build-arg BUILD_TIMESTAMP=$(BUILD_DATE) --build-arg BUILD_COMMIT=$(BUILD_COMMIT)
-# The smoke probe `dev-deploy` ends with (below the image block). SMOKE_URL, the dev stack's address,
-# is site-local topology: set it in Makefile.local. /version.json names the build's commit; the
-# container is the one compose.yml runs. No Python, so no entry points to import.
+# The dev stack runs on the dev host, an ssh alias every coding machine resolves (compose.override.yml
+# puts it on the dev edge). `make dev-deploy` from the main checkout builds, pushes and starts it there.
+DEV_HOST := devhost
+# The smoke probe `dev-deploy` ends with (below the image block): the stack's dev name, through the
+# edge. /version.json names the build's commit; the container is the one compose.yml runs. No Python,
+# so no entry points to import.
+SMOKE_URL := https://dev-luxmark.luxardolabs.com
 SMOKE_HEALTH_PATH := /version.json
 SMOKE_STATIC_PATH := /css/styles.css
 SMOKE_CONTAINERS  := luxmark-web

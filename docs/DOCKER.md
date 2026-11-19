@@ -5,10 +5,8 @@ This guide covers building, running, and deploying LuxMark with Docker.
 ## Quick Start
 
 ```bash
-# Run a published release with Docker Compose (compose pulls; it never builds)
-cp .env.example .env             # set TAG to the release you want, e.g. TAG=2026.11.0
-docker network create luxardolabs 2>/dev/null || true   # compose.yml joins this external network
-docker compose up -d
+# Run a published release on a host port
+docker run -d -p 8080:8080 --name luxmark ghcr.io/luxardolabs/luxmark:2026.11.0
 
 # Or build and run from source
 docker build -t luxmark .
@@ -17,11 +15,15 @@ docker run -d -p 8080:8080 --name luxmark luxmark
 
 Access LuxMark at `http://localhost:8080`
 
+compose.yml is the stack behind a reverse proxy: it publishes no host port, and the proxy reaches the container as `luxmark:8080` on a shared docker network (`EDGE_NETWORK`, default `luxardolabs`).
+
 ## Docker Compose
 
 ### Development
 
 ```bash
+cp .env.example .env     # set TAG to the release you want, e.g. TAG=2026.11.0
+docker network create luxardolabs 2>/dev/null || true   # the proxy's network; compose.yml joins it
 docker compose up -d     # needs TAG in .env (compose.yml uses ${TAG:?})
 docker compose logs -f
 docker compose down
@@ -92,12 +94,7 @@ The Docker image includes:
 
 ### Change Port
 
-Set `PORT` (and `LUXMARK_BIND`) in `.env`; compose.yml reads both:
-
-```bash
-PORT=3000             # host port
-LUXMARK_BIND=0.0.0.0  # default 127.0.0.1 (loopback); 0.0.0.0 serves the page to your LAN directly
-```
+Choose the host port with `docker run -p <port>:8080` (`-p 127.0.0.1:<port>:8080` keeps it on loopback). Under compose the container publishes nothing; your proxy chooses the public port.
 
 ## Image Size
 

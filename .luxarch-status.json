@@ -777,14 +777,14 @@
       },
       {
         "rule": "repo.dev_host_declared",
-        "status": "FAIL",
+        "status": "PASS",
         "since": "0.365.0",
-        "violations": 1,
+        "violations": 0,
         "crashed": false,
         "deferred": false,
         "inert": false,
         "inert_reason": "",
-        "fix": "Move the dev stack to the dev host: `DEV_HOST := devhost` committed in the Makefile, no host `ports:`, and the stack's front on the `dev-edge` network at the pinned `ipv4_address` infra assigned it: the app's own nginx, or, for an app with none, the app itself. A stack that serves no HTTP (a collector) declares `front = \"none\"` and is proven by its containers' health; its Grafana is an ops UI, never the front. The whole recipe, every shape: --doc FLEET-BUILD-DEPLOY-STANDARD, \"The dev host\", \"Moving a stack to the dev host\".",
+        "fix": "",
         "example": ""
       },
       {
@@ -957,20 +957,20 @@
       }
     ],
     "summary": {
-      "PASS": 59,
-      "FAIL": 1,
+      "PASS": 60,
+      "FAIL": 0,
       "XFAIL": 0,
       "XPASS": 0,
       "INERT": 15
     }
   },
   "summary": {
-    "PASS": 62,
-    "FAIL": 1,
+    "PASS": 63,
+    "FAIL": 0,
     "XFAIL": 0,
     "XPASS": 0,
     "INERT": 15
   },
-  "commit": "c353428dc408cf14f99cd43db5a0436be5cc5bbd",
-  "generated_at": "2026-11-19T01:42:49Z"
+  "commit": "80d2be5c5b6db444f8a9a2a4447da1af5ba25b8c",
+  "generated_at": "2026-11-19T02:37:34Z"
 }

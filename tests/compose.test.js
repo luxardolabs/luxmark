@@ -26,18 +26,17 @@ test('nginx still listens IPv4-only, so the 127.0.0.1 healthcheck still applies'
   assert.doesNotMatch(nginxConf, /listen\s+\[::\]/);
 });
 
-test('the container answers as `luxmark`, the name the edge proxy routes to', () => {
-  // The OVH edge (nginx-ovh conf.d/luxmark.luxardolabs.com.conf) proxies to http://luxmark:8080 on the
-  // shared `luxardolabs` network. The container name stays prefixed (repo.compose_conventions), so the
-  // edge's name is a network alias; without it the site can't reach the container.
+test('the container answers as `luxmark` on the edge network the environment names', () => {
+  // Prod: the OVH edge (nginx-ovh conf.d/luxmark.luxardolabs.com.conf) proxies to http://luxmark:8080
+  // on the shared `luxardolabs` network, so the default network is that one and the container carries
+  // the alias. Dev: .env.dev names `dev-edge` and the address infra pinned, which the dev edge routes to.
   assert.match(compose, /^\s+container_name:\s*luxmark-web\s*$/m);
-  assert.match(compose, /networks:\n\s+luxardolabs:\n\s+aliases:\n\s+- luxmark\s*$/m);
+  assert.match(compose, /^\s+networks:\n\s+edge:\n\s+aliases:\n\s+- luxmark\n\s+ipv4_address: \$\{EDGE_IPV4:-\}\s*$/m);
+  assert.match(compose, /^networks:\n\s+edge:\n\s+name: \$\{EDGE_NETWORK:-luxardolabs\}\n\s+external: true\s*$/m);
 });
 
-test('the host port binds to loopback by default, so nothing reaches nginx around the edge', () => {
-  // The edge proxies over the docker network; a 0.0.0.0 publish let anything on the node's LAN reach the
-  // container directly (no TLS, no edge headers). LUXMARK_BIND opts in to wider exposure for self-hosting.
-  const port = compose.match(/^\s+- "([^"]+:8080)"\s*$/m);
-  assert.ok(port, 'compose.yml publishes no 8080 port');
-  assert.match(port[1], /^\$\{LUXMARK_BIND:-127\.0\.0\.1\}:\$\{PORT:-8080\}:8080$/);
+test('compose.yml publishes no host port: every edge reaches the container over its network', () => {
+  // A host publish lets anything on the node reach nginx around the edge (no TLS, no edge headers),
+  // and on the shared dev host two stacks cannot hold one port. Self-hosting publishes with docker run.
+  assert.doesNotMatch(compose, /^\s+ports:/m);
 });

@@ -35,6 +35,12 @@ app  = "src"
 enabled = false
 exempt_reason = "static-web: the app is static files served by stock nginx; there is no first-party server code to trace, meter or log from"
 
+# How the dev stack is reached on the dev host: the app itself (its image is nginx serving the static
+# files on 8080), with no front nginx of its own; the dev edge proxies dev-luxmark.luxardolabs.com to it.
+[dev_host]
+front = "app"
+service = "luxmark"
+
 # Who pushes: an agent pushes its work when it lands (owner decision 2026-10-26). Read by
 # unpushed-stop-guard and /wrap-up.
 [agents]
